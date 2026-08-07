@@ -72,8 +72,8 @@ using (var zip = ZipFile.Open(tampered, ZipArchiveMode.Update))
     entry.Delete();
     var replacement = zip.CreateEntry("_bodies/app.js", CompressionLevel.NoCompression);
     replacement.LastWriteTime = new DateTimeOffset(2000, 1, 1, 0, 0, 0, TimeSpan.Zero);
-    await using var stream = replacement.Open();
-    await stream.WriteAsync(Encoding.UTF8.GetBytes("console.log('TAMPERED');"));
+    await using var replacementStream = replacement.Open();
+    await replacementStream.WriteAsync(Encoding.UTF8.GetBytes("console.log('TAMPERED');"));
 }
 var tamperedVerify = await portable.VerifyAsync(tampered);
 Require(!tamperedVerify.Ok && tamperedVerify.Message.Contains("SHA-256 mismatch", StringComparison.OrdinalIgnoreCase), "Tampered package was not rejected by SHA-256 verification");
@@ -85,10 +85,10 @@ var traversal = Path.Combine(packages, "path-traversal.twcproj");
 using (var zip = ZipFile.Open(traversal, ZipArchiveMode.Create))
 {
     var manifest = zip.CreateEntry(PortableProjectPackage.ManifestEntryPath, CompressionLevel.NoCompression);
-    await using (var stream = manifest.Open())
+    await using (var manifestStream = manifest.Open())
     {
         var bytes = Encoding.UTF8.GetBytes("{\"format\":\"TrueWebsiteCloner.PortableProject\",\"version\":\"0.11.0\",\"projectId\":\"x\",\"contentRootSha256\":\"x\",\"targetUrl\":null,\"fileCount\":0,\"totalBytes\":0,\"files\":[]}");
-        await stream.WriteAsync(bytes);
+        await manifestStream.WriteAsync(bytes);
     }
     var evil = zip.CreateEntry("../escape.txt", CompressionLevel.NoCompression);
     await using var evilStream = evil.Open();
@@ -102,12 +102,12 @@ var symlinkPackage = Path.Combine(packages, "symlink.twcproj");
 using (var zip = ZipFile.Open(symlinkPackage, ZipArchiveMode.Create))
 {
     var manifest = zip.CreateEntry(PortableProjectPackage.ManifestEntryPath, CompressionLevel.NoCompression);
-    await using (var stream = manifest.Open())
-        await stream.WriteAsync(Encoding.UTF8.GetBytes("{\"format\":\"TrueWebsiteCloner.PortableProject\",\"version\":\"0.11.0\",\"projectId\":\"x\",\"contentRootSha256\":\"x\",\"targetUrl\":null,\"fileCount\":0,\"totalBytes\":0,\"files\":[]}"));
+    await using (var manifestStream = manifest.Open())
+        await manifestStream.WriteAsync(Encoding.UTF8.GetBytes("{\"format\":\"TrueWebsiteCloner.PortableProject\",\"version\":\"0.11.0\",\"projectId\":\"x\",\"contentRootSha256\":\"x\",\"targetUrl\":null,\"fileCount\":0,\"totalBytes\":0,\"files\":[]}"));
     var link = zip.CreateEntry("link-to-outside", CompressionLevel.NoCompression);
     link.ExternalAttributes = (0xA000 | 0x1FF) << 16;
-    await using var stream = link.Open();
-    await stream.WriteAsync(Encoding.UTF8.GetBytes("../../outside"));
+    await using var linkStream = link.Open();
+    await linkStream.WriteAsync(Encoding.UTF8.GetBytes("../../outside"));
 }
 var symlinkVerify = await portable.VerifyAsync(symlinkPackage);
 Require(!symlinkVerify.Ok && symlinkVerify.Message.Contains("Symlink", StringComparison.OrdinalIgnoreCase), "Symlink archive entry was not rejected");
