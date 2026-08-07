@@ -1,27 +1,21 @@
 # TrueWebsiteCloner
 
-Current development stage: **v0.11 Portable Project Export / Import Integrity**.
+Current development stage: **v0.12 Project Catalog / Workspace Index**.
 
 ## Passed gates
 
-Gates 0.1 through 0.10 have passed on GitHub Actions. TrueWebsiteCloner now covers real Chrome capture, response bodies, deterministic offline building, local GET replay, verification, controlled recovery, dependency/completeness analysis, visual comparison and immutable snapshot diffs.
+Gates 0.1 through 0.11 have passed on GitHub Actions. The project includes real Chrome capture, response bodies, deterministic offline building, loopback replay, verification, controlled recovery, dependency/completeness analysis, visual diffing, immutable snapshots, and tamper-resistant portable export/import.
 
-## v0.11 scope
+## v0.12 scope
 
-V0.11 introduces portable `.twcproj` packages for moving or archiving a verified project without losing its history and reports. Every source file has a SHA-256 and byte length in the package manifest, the full project has a deterministic content-root SHA-256, and the package bytes receive a separate SHA-256 sidecar.
+The Windows Desktop now has a project catalog for the configured workspace. It shows each capture's status, target, completeness, visual mismatch, history count, captured bodies and missing resources, and provides Refresh, Open, Export and Import operations from the same view.
 
-Import verifies the whole archive before extraction and re-verifies every file while materializing it. Path traversal, ZIP symlinks, source reparse points, undeclared files, duplicate paths, integrity mismatches and existing destinations are rejected. Import uses a staging directory and becomes visible at the requested destination only after successful verification.
+Catalog discovery never scans outside the selected workspace. Reparse points are skipped, depth and directory counts are bounded, and scanning stops at each recognized capture root. Persisted catalog metadata uses relative paths only.
 
-CLI:
+Portable packages imported through V0.11 are integrity-verified before becoming visible in the workspace. Workspace export also supports re-exporting an imported project without recursively embedding `_twc_package` metadata.
 
-```text
-TrueWebsiteCloner.PortableTool export --project <capture-folder> --output <project.twcproj>
-TrueWebsiteCloner.PortableTool verify --package <project.twcproj>
-TrueWebsiteCloner.PortableTool import --package <project.twcproj> --destination <new-folder>
-```
-
-See `docs/GATE-0.11.md` for integrity and import-safety rules.
+See `docs/GATE-0.12.md` for scan and catalog rules.
 
 ## Next stage
 
-After Gate 0.11 passes, the next stage is project catalog/indexing inside the desktop app: discover local projects, show gate/completeness/visual/history status, and open/export/import projects from one workspace without scanning outside configured project roots.
+After Gate 0.12 passes, the next stage is a project diagnostics dashboard: normalize all gate/report results into one machine-readable health model and surface actionable failures, warnings, evidence paths and recommended next actions per project.

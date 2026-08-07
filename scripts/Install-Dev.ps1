@@ -4,7 +4,7 @@ $Artifacts = Join-Path $Root "artifacts"
 $ExtensionId = "ggcmdgdiopplpbcfinamhjdkbhiknfbk"
 $HostName = "com.truewebsitecloner.host"
 
-Write-Host "TrueWebsiteCloner v0.11 - development install" -ForegroundColor Cyan
+Write-Host "TrueWebsiteCloner v0.12 - development install" -ForegroundColor Cyan
 $dotnet = Get-Command dotnet -ErrorAction SilentlyContinue
 if (-not $dotnet) { throw ".NET SDK was not found. Install .NET 10 SDK first." }
 $version = (& dotnet --version).Trim()

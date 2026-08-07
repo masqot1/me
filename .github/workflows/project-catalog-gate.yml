@@ -1,0 +1,50 @@
+name: TrueWebsiteCloner Project Catalog Gate
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  project-catalog:
+    name: Gate 0.12 / Workspace Project Catalog
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+      - name: Setup .NET 10 SDK
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+      - name: Build Desktop and tools
+        shell: pwsh
+        run: ./scripts/Install-Dev.ps1
+      - name: Validate catalog scope controls
+        shell: pwsh
+        run: |
+          $source = Get-Content './src/TrueWebsiteCloner.Core/ProjectCatalogService.cs' -Raw
+          foreach ($required in @('FileAttributes.ReparsePoint','IsInsideRoot','MaxScanDepth = 8','MaxScanDirectories = 10_000','_twc_catalog')) {
+            if ($source -notmatch [regex]::Escape($required)) { throw "Catalog safety control missing: $required" }
+          }
+          $xaml = [xml](Get-Content './src/TrueWebsiteCloner.Desktop/MainWindow.xaml' -Raw)
+          if (-not $xaml) { throw 'Desktop XAML could not be parsed.' }
+          Write-Host 'PASS  workspace-scoped catalog controls and Desktop XAML'
+      - name: Run Project Catalog Gate 0.12
+        shell: pwsh
+        env:
+          TWC_CATALOG_GATE_OUTPUT: ${{ github.workspace }}\catalog-gate-output
+        run: dotnet run --project ./tests/TrueWebsiteCloner.CatalogGateTests/TrueWebsiteCloner.CatalogGateTests.csproj -c Release
+      - name: Upload Gate 0.12 evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: truewebsitecloner-gate-0.12-${{ github.run_number }}
+          path: catalog-gate-output/
+          if-no-files-found: warn
+          retention-days: 14

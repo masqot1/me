@@ -2,6 +2,7 @@ using Microsoft.Win32;
 using System.Diagnostics;
 using System.IO;
 using System.Windows;
+using System.Windows.Input;
 using System.Windows.Threading;
 using TrueWebsiteCloner.Core;
 using TrueWebsiteCloner.Shared;
@@ -12,7 +13,10 @@ public partial class MainWindow : Window
 {
     private readonly BridgeServer _bridge = new();
     private readonly OfflineSiteBuilder _offlineBuilder = new();
+    private readonly ProjectCatalogService _catalogService = new();
+    private readonly WorkspacePortableOperations _workspacePortable = new();
     private readonly DispatcherTimer _statusTimer = new() { Interval = TimeSpan.FromSeconds(1) };
+    private IReadOnlyList<ProjectCatalogEntry> _catalogEntries = [];
     private string? _chromePath;
     private Process? _testLabProcess;
     private Process? _localRuntimeProcess;
@@ -38,7 +42,7 @@ public partial class MainWindow : Window
         {
             await _bridge.StartAsync();
             Log($"Desktop bridge listening on 127.0.0.1:{_bridge.Port}");
-            Log("TrueWebsiteCloner v0.5: capture + offline builder + local replay runtime ready.");
+            Log("TrueWebsiteCloner v0.12: project catalog workspace ready.");
         }
         catch (Exception ex) { Log("Bridge start failed: " + ex.Message); }
 
@@ -47,6 +51,7 @@ public partial class MainWindow : Window
         LaunchChromeButton.IsEnabled = _chromePath is not null;
         _statusTimer.Start();
         UpdateStatuses();
+        await RefreshCatalogAsync();
     }
 
     private async void MainWindow_Closing(object? sender, System.ComponentModel.CancelEventArgs e)
@@ -83,16 +88,78 @@ public partial class MainWindow : Window
         Process.Start(new ProcessStartInfo("explorer.exe", folder) { UseShellExecute = true });
     }
 
-    private void ChooseProjectFolderButton_Click(object sender, RoutedEventArgs e)
+    private async void ChooseProjectFolderButton_Click(object sender, RoutedEventArgs e)
     {
-        var dialog = new OpenFolderDialog { Title = "Choose TrueWebsiteCloner projects folder", Multiselect = false };
+        var dialog = new OpenFolderDialog { Title = "Choose TrueWebsiteCloner workspace", Multiselect = false };
         if (dialog.ShowDialog(this) == true)
         {
             ProjectFolderTextBox.Text = dialog.FolderName;
             Directory.CreateDirectory(dialog.FolderName);
             _bridge.SetProjectRoot(dialog.FolderName);
-            Log("Project folder: " + dialog.FolderName);
+            Log("Workspace: " + dialog.FolderName);
+            await RefreshCatalogAsync();
         }
+    }
+
+    private async void RefreshCatalogButton_Click(object sender, RoutedEventArgs e) => await RefreshCatalogAsync();
+
+    private async Task RefreshCatalogAsync()
+    {
+        var result = await _catalogService.RefreshAsync(ProjectFolderTextBox.Text);
+        if (!result.Ok) { Log("CATALOG FAIL: " + result.Message); return; }
+        _catalogEntries = result.Projects;
+        ProjectCatalogGrid.ItemsSource = _catalogEntries;
+        CatalogCountText.Text = $"{_catalogEntries.Count} project{(_catalogEntries.Count == 1 ? string.Empty : "s")}";
+        Log($"CATALOG PASS: {_catalogEntries.Count} projects; scanned={result.ScannedDirectories}; skipped reparse={result.SkippedReparsePoints}");
+    }
+
+    private ProjectCatalogEntry? SelectedProject => ProjectCatalogGrid.SelectedItem as ProjectCatalogEntry;
+    private string? ActiveProjectPath => SelectedProject?.FullPath ?? _catalogEntries.FirstOrDefault()?.FullPath;
+
+    private void OpenSelectedProjectButton_Click(object sender, RoutedEventArgs e) => OpenSelectedProject();
+    private void ProjectCatalogGrid_MouseDoubleClick(object sender, MouseButtonEventArgs e) => OpenSelectedProject();
+
+    private void OpenSelectedProject()
+    {
+        var project = SelectedProject;
+        if (project is null) { Log("CATALOG: select a project first."); return; }
+        Process.Start(new ProcessStartInfo("explorer.exe", project.FullPath) { UseShellExecute = true });
+    }
+
+    private async void ExportSelectedProjectButton_Click(object sender, RoutedEventArgs e)
+    {
+        var project = SelectedProject;
+        if (project is null) { Log("EXPORT: select a project first."); return; }
+        var dialog = new SaveFileDialog
+        {
+            Title = "Export TrueWebsiteCloner portable project",
+            Filter = "TrueWebsiteCloner Project (*.twcproj)|*.twcproj|All files (*.*)|*.*",
+            FileName = project.Name + ".twcproj",
+            InitialDirectory = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory),
+            AddExtension = true,
+            DefaultExt = ".twcproj",
+            OverwritePrompt = true
+        };
+        if (dialog.ShowDialog(this) != true) return;
+        var result = await _workspacePortable.ExportAsync(project.FullPath, dialog.FileName);
+        Log(result.Ok
+            ? $"EXPORT PASS: {result.FileCount} files; SHA-256={result.PackageSha256}; {dialog.FileName}"
+            : "EXPORT FAIL: " + result.Message);
+    }
+
+    private async void ImportPackageButton_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new OpenFileDialog
+        {
+            Title = "Import TrueWebsiteCloner portable project",
+            Filter = "TrueWebsiteCloner Project (*.twcproj)|*.twcproj|All files (*.*)|*.*",
+            Multiselect = false
+        };
+        if (dialog.ShowDialog(this) != true) return;
+        var result = await _workspacePortable.ImportIntoWorkspaceAsync(dialog.FileName, ProjectFolderTextBox.Text);
+        if (!result.Ok) { Log("IMPORT FAIL: " + result.Message); return; }
+        Log($"IMPORT PASS: integrity verified; destination={result.DestinationPath}");
+        await RefreshCatalogAsync();
     }
 
     private void StartTestLabButton_Click(object sender, RoutedEventArgs e)
@@ -112,44 +179,34 @@ public partial class MainWindow : Window
 
     private async void BuildOfflineSiteButton_Click(object sender, RoutedEventArgs e)
     {
-        var capture = FindLatestCompletedCapture(ProjectFolderTextBox.Text);
-        if (capture is null) { Log("OFFLINE BUILD: no completed capture was found."); return; }
+        var capture = ActiveProjectPath;
+        if (capture is null) { Log("OFFLINE BUILD: no indexed project was found."); return; }
         await BuildOfflineAsync(capture, openFolder: true);
+        await RefreshCatalogAsync();
     }
 
     private async void StartOfflineRuntimeButton_Click(object sender, RoutedEventArgs e)
     {
         try
         {
-            var capture = FindLatestCompletedCapture(ProjectFolderTextBox.Text);
-            if (capture is null) { Log("LOCAL RUNTIME: no completed capture was found."); return; }
-
+            var capture = ActiveProjectPath;
+            if (capture is null) { Log("LOCAL RUNTIME: no indexed project was found."); return; }
             var build = await BuildOfflineAsync(capture, openFolder: false);
             if (!build) return;
 
             var exe = DevelopmentLocator.FindLocalRuntimeExe();
             if (exe is null) { Log("LOCAL RUNTIME: executable not found. Run Install-Dev.ps1 first."); return; }
-
-            if (_localRuntimeProcess is { HasExited: false })
-            {
-                try { _localRuntimeProcess.Kill(entireProcessTree: true); } catch { }
-                _localRuntimeProcess = null;
-            }
+            if (_localRuntimeProcess is { HasExited: false }) { try { _localRuntimeProcess.Kill(entireProcessTree: true); } catch { } }
 
             var startInfo = new ProcessStartInfo(exe) { UseShellExecute = false, CreateNoWindow = true };
-            startInfo.ArgumentList.Add("--capture");
-            startInfo.ArgumentList.Add(capture);
-            startInfo.ArgumentList.Add("--port");
-            startInfo.ArgumentList.Add("7850");
+            startInfo.ArgumentList.Add("--capture"); startInfo.ArgumentList.Add(capture);
+            startInfo.ArgumentList.Add("--port"); startInfo.ArgumentList.Add("7850");
             _localRuntimeProcess = Process.Start(startInfo);
             if (_localRuntimeProcess is null) { Log("LOCAL RUNTIME: failed to start process."); return; }
-
             Log("LOCAL RUNTIME: http://127.0.0.1:7850");
             await Task.Delay(900);
-            if (_chromePath is not null)
-                Process.Start(new ProcessStartInfo(_chromePath, "http://127.0.0.1:7850/") { UseShellExecute = true });
-            else
-                Process.Start(new ProcessStartInfo("http://127.0.0.1:7850/") { UseShellExecute = true });
+            if (_chromePath is not null) Process.Start(new ProcessStartInfo(_chromePath, "http://127.0.0.1:7850/") { UseShellExecute = true });
+            else Process.Start(new ProcessStartInfo("http://127.0.0.1:7850/") { UseShellExecute = true });
         }
         catch (Exception ex) { Log("LOCAL RUNTIME FAIL: " + ex.Message); }
     }
@@ -162,23 +219,10 @@ public partial class MainWindow : Window
             var result = await _offlineBuilder.BuildAsync(capture);
             if (!result.Ok) { Log("OFFLINE BUILD FAIL: " + result.Message); return false; }
             Log($"OFFLINE BUILD PASS: resources={result.ResourceCount}, rewritten={result.RewrittenReferences}, missing={result.MissingReferences}");
-            Log("Offline output: " + result.OutputRoot);
-            if (openFolder && result.OutputRoot is not null)
-                Process.Start(new ProcessStartInfo("explorer.exe", result.OutputRoot) { UseShellExecute = true });
+            if (openFolder && result.OutputRoot is not null) Process.Start(new ProcessStartInfo("explorer.exe", result.OutputRoot) { UseShellExecute = true });
             return true;
         }
         catch (Exception ex) { Log("OFFLINE BUILD FAIL: " + ex.Message); return false; }
-    }
-
-    private static string? FindLatestCompletedCapture(string projectRoot)
-    {
-        if (!Directory.Exists(projectRoot)) return null;
-        return Directory.EnumerateFiles(projectRoot, "bodies.jsonl", SearchOption.AllDirectories)
-            .Where(path => string.Equals(new DirectoryInfo(Path.GetDirectoryName(path)!).Name, "_bodies", StringComparison.OrdinalIgnoreCase))
-            .Select(path => Directory.GetParent(Path.GetDirectoryName(path)!)?.FullName)
-            .Where(path => path is not null && File.Exists(Path.Combine(path!, "_network", "summary.json")))
-            .OrderByDescending(path => Directory.GetLastWriteTimeUtc(path!))
-            .FirstOrDefault();
     }
 
     private void RunFoundationCheckButton_Click(object sender, RoutedEventArgs e)
@@ -186,13 +230,13 @@ public partial class MainWindow : Window
         var reg = NativeHostRegistration.IsRegistered();
         var seen = _bridge.WasExtensionSeenRecently(TimeSpan.FromSeconds(15));
         var chrome = _chromePath is not null;
-        Log("FOUNDATION / CAPTURE CORE CHECK");
+        Log("FOUNDATION / WORKSPACE CHECK");
         Log($"  Desktop bridge : {(_bridge.Port > 0 ? "PASS" : "FAIL")}");
         Log($"  Native host    : {(reg ? "PASS" : "FAIL")}");
         Log($"  Chrome         : {(chrome ? "PASS" : "FAIL")}");
         Log($"  Extension link : {(seen ? "PASS" : "FAIL - test the extension connection")}");
-        Log($"  Project root   : {(Directory.Exists(ProjectFolderTextBox.Text) ? "PASS" : "FAIL")}");
-        Log($"  RESULT         : {(_bridge.Port > 0 && reg && chrome && seen ? "PASS" : "NOT READY")}");
+        Log($"  Workspace      : {(Directory.Exists(ProjectFolderTextBox.Text) ? "PASS" : "FAIL")}");
+        Log($"  Catalog        : {_catalogEntries.Count} project(s)");
     }
 
     private void Log(string message) => ActivityLogText.Text += $"[{DateTime.Now:HH:mm:ss}] {message}{Environment.NewLine}";
