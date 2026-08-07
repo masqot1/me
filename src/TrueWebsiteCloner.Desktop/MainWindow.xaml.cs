@@ -21,7 +21,10 @@ public partial class MainWindow : Window
         Closing += MainWindow_Closing;
         _bridge.StateChanged += (_, _) => Dispatcher.Invoke(UpdateStatuses);
         _statusTimer.Tick += (_, _) => UpdateStatuses();
-        ProjectFolderTextBox.Text = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), "TrueWebsiteClonerProjects");
+        var configuredRoot = Environment.GetEnvironmentVariable("TWC_PROJECT_ROOT");
+        ProjectFolderTextBox.Text = string.IsNullOrWhiteSpace(configuredRoot)
+            ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), "TrueWebsiteClonerProjects")
+            : Path.GetFullPath(configuredRoot);
         Directory.CreateDirectory(ProjectFolderTextBox.Text);
         _bridge.SetProjectRoot(ProjectFolderTextBox.Text);
     }

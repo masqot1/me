@@ -2,7 +2,7 @@ const button = document.querySelector('#apiButton');
 const output = document.querySelector('#output');
 const status = document.querySelector('#apiStatus');
 
-button.addEventListener('click', async () => {
+async function runSampleApi() {
   status.textContent = 'Loading…';
   try {
     const response = await fetch('/api/sample');
@@ -13,4 +13,10 @@ button.addEventListener('click', async () => {
     status.textContent = 'FAIL';
     output.textContent = String(error);
   }
-});
+}
+
+button.addEventListener('click', runSampleApi);
+
+if (new URLSearchParams(location.search).get('gate') === '0.2B') {
+  setTimeout(runSampleApi, 1200);
+}

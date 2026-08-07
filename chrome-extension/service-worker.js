@@ -4,6 +4,8 @@ let nativePort = null;
 let activeCapture = null;
 let eventCount = 0;
 
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 chrome.storage.local.get('captureState').then(({ captureState }) => {
   if (captureState?.active) {
     activeCapture = captureState;
@@ -54,9 +56,10 @@ async function getActiveTab() {
   return tab;
 }
 
-async function startCapture(reload) {
+async function startCaptureForTab(tab, reload) {
   if (activeCapture) return { ok: false, message: 'A capture is already active.' };
-  const tab = await getActiveTab();
+  if (!tab?.id || !/^https?:/i.test(tab.url || '')) return { ok: false, message: 'Target tab is not capturable.' };
+
   ensureNativePort();
   await chrome.debugger.attach({ tabId: tab.id }, DEBUGGER_VERSION);
   try {
@@ -74,6 +77,10 @@ async function startCapture(reload) {
   return { ok: true, message: reload ? 'Capture started and tab reloaded.' : 'Capture started.', state: await persistState() };
 }
 
+async function startCapture(reload) {
+  return startCaptureForTab(await getActiveTab(), reload);
+}
+
 async function stopCapture(reason = 'user') {
   if (!activeCapture) return { ok: false, message: 'No active capture.' };
   const capture = activeCapture;
@@ -83,7 +90,7 @@ async function stopCapture(reason = 'user') {
   const count = eventCount;
   eventCount = 0;
   await persistState({ lastEventCount: count, lastError: null });
-  return { ok: true, message: `Capture stopped. ${count} metadata events sent.` };
+  return { ok: true, message: `Capture stopped. ${count} metadata events sent.`, eventCount: count };
 }
 
 function sendCaptureEvent(message) {
@@ -91,6 +98,20 @@ function sendCaptureEvent(message) {
   eventCount += 1;
   postNative(message);
   persistState().catch(() => {});
+}
+
+async function runRuntimeGate() {
+  if (activeCapture) return { ok: false, message: 'Another capture is already active.' };
+  const tabs = await chrome.tabs.query({});
+  const target = tabs.find((tab) => tab.id && (tab.url || '').startsWith('http://127.0.0.1:7843/'));
+  if (!target) return { ok: false, message: 'Test Lab tab was not found.' };
+
+  const start = await startCaptureForTab(target, true);
+  if (!start.ok) return start;
+  await sleep(6500);
+  const stop = await stopCapture('runtime-gate-0.2B');
+  if (!stop.ok) return stop;
+  return { ok: true, message: 'Real Chrome capture completed.', eventCount: stop.eventCount, tabId: target.id };
 }
 
 chrome.debugger.onEvent.addListener((source, method, params) => {
@@ -135,6 +156,10 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   }
   if (message?.type === 'capture.status') {
     chrome.storage.local.get('captureState').then(({ captureState }) => sendResponse(captureState || { active: false }));
+    return true;
+  }
+  if (message?.type === 'runtime.gate.start' && message?.gate === '0.2B') {
+    runRuntimeGate().then(sendResponse).catch((error) => sendResponse({ ok: false, message: String(error.message || error) }));
     return true;
   }
   return false;
