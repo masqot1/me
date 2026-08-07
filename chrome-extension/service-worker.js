@@ -56,6 +56,16 @@ async function getActiveTab() {
   return tab;
 }
 
+async function waitForTabComplete(tabId, timeoutMs = 15000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const tab = await chrome.tabs.get(tabId);
+    if (tab.status === 'complete') return tab;
+    await sleep(150);
+  }
+  throw new Error(`Tab ${tabId} did not finish loading.`);
+}
+
 async function startCaptureForTab(tab, reload) {
   if (activeCapture) return { ok: false, message: 'A capture is already active.' };
   if (!tab?.id || !/^https?:/i.test(tab.url || '')) return { ok: false, message: 'Target tab is not capturable.' };
@@ -102,16 +112,21 @@ function sendCaptureEvent(message) {
 
 async function runRuntimeGate() {
   if (activeCapture) return { ok: false, message: 'Another capture is already active.' };
-  const tabs = await chrome.tabs.query({});
-  const target = tabs.find((tab) => tab.id && (tab.url || '').startsWith('http://127.0.0.1:7843/'));
-  if (!target) return { ok: false, message: 'Test Lab tab was not found.' };
-
-  const start = await startCaptureForTab(target, true);
-  if (!start.ok) return start;
-  await sleep(6500);
-  const stop = await stopCapture('runtime-gate-0.2B');
-  if (!stop.ok) return stop;
-  return { ok: true, message: 'Real Chrome capture completed.', eventCount: stop.eventCount, tabId: target.id };
+  let targetId = null;
+  try {
+    const created = await chrome.tabs.create({ url: 'http://127.0.0.1:7843/?gate=0.2B', active: false });
+    if (!created.id) throw new Error('Could not create Test Lab tab.');
+    targetId = created.id;
+    const target = await waitForTabComplete(targetId);
+    const start = await startCaptureForTab(target, true);
+    if (!start.ok) return start;
+    await sleep(6500);
+    const stop = await stopCapture('runtime-gate-0.2B');
+    if (!stop.ok) return stop;
+    return { ok: true, message: 'Real Chrome capture completed.', eventCount: stop.eventCount, tabId: targetId };
+  } finally {
+    if (targetId !== null) await chrome.tabs.remove(targetId).catch(() => {});
+  }
 }
 
 chrome.debugger.onEvent.addListener((source, method, params) => {

@@ -1,0 +1,129 @@
+name: TrueWebsiteCloner Real Chrome Runtime Gate
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  real-chrome-runtime:
+    name: Gate 0.2B / Chrome + Extension + Native Host + Desktop
+    runs-on: windows-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 10 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Build and register TrueWebsiteCloner
+        shell: pwsh
+        run: ./scripts/Install-Dev.ps1
+
+      - name: Install Puppeteer and Chrome for Testing
+        shell: pwsh
+        run: npm install --prefix ./tests/runtime-gate-0.2B --no-audit --no-fund
+
+      - name: Run real Chrome Gate 0.2B
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $gateRoot = Join-Path $env:GITHUB_WORKSPACE 'gate-runtime-0.2B'
+          if (Test-Path $gateRoot) { Remove-Item $gateRoot -Recurse -Force }
+          New-Item -ItemType Directory -Path $gateRoot -Force | Out-Null
+          $env:TWC_PROJECT_ROOT = $gateRoot
+
+          $testLabExe = Join-Path $env:GITHUB_WORKSPACE 'artifacts\testlab\TrueWebsiteCloner.TestLab.exe'
+          $desktopExe = Join-Path $env:GITHUB_WORKSPACE 'artifacts\desktop\TrueWebsiteCloner.exe'
+          $bridgeInfo = Join-Path $env:LOCALAPPDATA 'TrueWebsiteCloner\runtime\bridge-info.json'
+          $testLab = $null
+          $desktop = $null
+
+          try {
+            $testLab = Start-Process -FilePath $testLabExe -PassThru -WindowStyle Hidden
+            $ready = $false
+            for ($i = 0; $i -lt 30; $i++) {
+              try { if ((Invoke-RestMethod 'http://127.0.0.1:7843/health' -TimeoutSec 2).ok) { $ready = $true; break } } catch { }
+              Start-Sleep -Milliseconds 500
+            }
+            if (-not $ready) { throw 'Test Lab did not become ready.' }
+            Write-Host 'PASS  Test Lab ready'
+
+            $desktop = Start-Process -FilePath $desktopExe -PassThru
+            for ($i = 0; $i -lt 30 -and -not (Test-Path $bridgeInfo); $i++) { Start-Sleep -Milliseconds 500 }
+            if (-not (Test-Path $bridgeInfo)) { throw 'Desktop bridge-info.json was not created.' }
+            Write-Host 'PASS  Desktop bridge ready'
+
+            Push-Location (Join-Path $env:GITHUB_WORKSPACE 'tests\runtime-gate-0.2B')
+            try {
+              node ./run.mjs
+              if ($LASTEXITCODE -ne 0) { throw "Puppeteer runtime gate exited with $LASTEXITCODE" }
+            } finally { Pop-Location }
+
+            $summary = $null
+            for ($i = 0; $i -lt 30 -and -not $summary; $i++) {
+              $summary = Get-ChildItem $gateRoot -Filter summary.json -Recurse -File -ErrorAction SilentlyContinue | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
+              if (-not $summary) { Start-Sleep -Milliseconds 500 }
+            }
+            if (-not $summary) { throw 'summary.json was not created by the real Chrome capture.' }
+
+            $networkDir = Split-Path $summary.FullName -Parent
+            $networkLog = Join-Path $networkDir 'network.jsonl'
+            $session = Join-Path $networkDir 'session.json'
+            if (-not (Test-Path $networkLog)) { throw 'network.jsonl missing.' }
+            if (-not (Test-Path $session)) { throw 'session.json missing.' }
+
+            $summaryJson = Get-Content $summary.FullName -Raw | ConvertFrom-Json
+            $networkText = Get-Content $networkLog -Raw
+            $records = @(Get-Content $networkLog).Count
+            if ([int]$summaryJson.eventCount -lt 6) { throw "Expected at least 6 metadata events; got $($summaryJson.eventCount)." }
+            if ($records -lt 6) { throw "Expected at least 6 JSONL records; got $records." }
+            if ($networkText -notmatch '/api/sample') { throw 'Test Lab /api/sample was not captured.' }
+            foreach ($forbidden in @('Authorization','Set-Cookie','Bearer SECRET','SECRET-BODY','postData')) {
+              if ($networkText -match [regex]::Escape($forbidden)) { throw "Sensitive/unapproved field leaked: $forbidden" }
+            }
+
+            [ordered]@{
+              gate = '0.2B'
+              result = 'PASS'
+              runner = $env:RUNNER_OS
+              eventCount = [int]$summaryJson.eventCount
+              networkRecords = $records
+              apiSampleCaptured = $true
+              sensitiveFieldsSaved = $false
+              commit = $env:GITHUB_SHA
+              completedAtUtc = (Get-Date).ToUniversalTime().ToString('o')
+            } | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $gateRoot 'github-runtime-report.json') -Encoding UTF8
+
+            Write-Host "PASS  Real Chrome metadata capture: $records records"
+            Write-Host 'PASS  /api/sample captured'
+            Write-Host 'PASS  Sensitive fields absent'
+            Write-Host 'RESULT: GATE 0.2B PASS'
+          }
+          finally {
+            if ($desktop -and -not $desktop.HasExited) { Stop-Process -Id $desktop.Id -Force -ErrorAction SilentlyContinue }
+            if ($testLab -and -not $testLab.HasExited) { Stop-Process -Id $testLab.Id -Force -ErrorAction SilentlyContinue }
+          }
+
+      - name: Upload Gate 0.2B evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: truewebsitecloner-real-chrome-gate-0.2B-${{ github.run_number }}
+          path: gate-runtime-0.2B/
+          if-no-files-found: warn
+          retention-days: 14
