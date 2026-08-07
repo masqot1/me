@@ -1,0 +1,48 @@
+name: TrueWebsiteCloner Portable Package Gate
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  portable-package:
+    name: Gate 0.11 / Export Import Integrity
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+      - name: Setup .NET 10 SDK
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+      - name: Build TrueWebsiteCloner
+        shell: pwsh
+        run: ./scripts/Install-Dev.ps1
+      - name: Validate portable-package safety controls
+        shell: pwsh
+        run: |
+          $source = Get-Content './src/TrueWebsiteCloner.Core/PortableProjectPackage.cs' -Raw
+          foreach ($required in @('FileAttributes.ReparsePoint','Unsafe archive path','Symlink archive entry rejected','SHA-256 mismatch','Import destination already exists','MaxTotalBytes','SafeDestinationPath')) {
+            if ($source -notmatch [regex]::Escape($required)) { throw "Portable-package safety control missing: $required" }
+          }
+          Write-Host 'PASS  package safety controls are present'
+      - name: Run Portable Export Import Gate 0.11
+        shell: pwsh
+        env:
+          TWC_PORTABLE_GATE_OUTPUT: ${{ github.workspace }}\portable-gate-output
+        run: dotnet run --project ./tests/TrueWebsiteCloner.PortableGateTests/TrueWebsiteCloner.PortableGateTests.csproj -c Release
+      - name: Upload Gate 0.11 evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: truewebsitecloner-gate-0.11-${{ github.run_number }}
+          path: portable-gate-output/
+          if-no-files-found: warn
+          retention-days: 14

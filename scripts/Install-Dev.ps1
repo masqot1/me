@@ -4,7 +4,7 @@ $Artifacts = Join-Path $Root "artifacts"
 $ExtensionId = "ggcmdgdiopplpbcfinamhjdkbhiknfbk"
 $HostName = "com.truewebsitecloner.host"
 
-Write-Host "TrueWebsiteCloner v0.10 - development install" -ForegroundColor Cyan
+Write-Host "TrueWebsiteCloner v0.11 - development install" -ForegroundColor Cyan
 $dotnet = Get-Command dotnet -ErrorAction SilentlyContinue
 if (-not $dotnet) { throw ".NET SDK was not found. Install .NET 10 SDK first." }
 $version = (& dotnet --version).Trim()
@@ -20,7 +20,8 @@ $projects = @(
   @{ Name='Offline Tool'; Project='src\TrueWebsiteCloner.OfflineTool\TrueWebsiteCloner.OfflineTool.csproj'; Output='offline-tool' },
   @{ Name='Recovery Tool'; Project='src\TrueWebsiteCloner.RecoveryTool\TrueWebsiteCloner.RecoveryTool.csproj'; Output='recovery-tool' },
   @{ Name='Graph Tool'; Project='src\TrueWebsiteCloner.GraphTool\TrueWebsiteCloner.GraphTool.csproj'; Output='graph-tool' },
-  @{ Name='Snapshot Tool'; Project='src\TrueWebsiteCloner.SnapshotTool\TrueWebsiteCloner.SnapshotTool.csproj'; Output='snapshot-tool' }
+  @{ Name='Snapshot Tool'; Project='src\TrueWebsiteCloner.SnapshotTool\TrueWebsiteCloner.SnapshotTool.csproj'; Output='snapshot-tool' },
+  @{ Name='Portable Tool'; Project='src\TrueWebsiteCloner.PortableTool\TrueWebsiteCloner.PortableTool.csproj'; Output='portable-tool' }
 )
 foreach ($item in $projects) {
   & dotnet publish (Join-Path $Root $item.Project) -c Release -r win-x64 --self-contained false -o (Join-Path $Artifacts $item.Output)
