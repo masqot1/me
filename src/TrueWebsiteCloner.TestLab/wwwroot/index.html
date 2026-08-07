@@ -10,12 +10,13 @@
   <main class="shell">
     <p class="eyebrow">TRUEWEBSITECLONER</p>
     <h1>Foundation Test Lab</h1>
-    <p>This site belongs to the project and is intentionally small. Later versions will add modules, lazy loading, workers, WebSockets, redirects, missing resources and replay scenarios.</p>
+    <p>This site belongs to the project and is intentionally deterministic. It provides controlled resources for capture, replay, verification, and recovery gates.</p>
     <div class="grid">
       <section><span>Static asset</span><strong id="staticStatus">Loaded</strong></section>
       <section><span>API request</span><strong id="apiStatus">Not tested</strong></section>
     </div>
     <button id="apiButton">Test local API</button>
+    <p><a id="recoveryLink" href="/recover/help.html">Recovery test resource</a></p>
     <pre id="output"></pre>
   </main>
   <script type="module" src="/app.js"></script>

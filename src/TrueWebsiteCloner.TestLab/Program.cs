@@ -17,7 +17,7 @@ app.MapGet("/health", () => Results.Json(new
 {
     ok = true,
     service = "TrueWebsiteCloner.TestLab",
-    version = "0.2.0",
+    version = "0.7.0",
     utc = DateTimeOffset.UtcNow
 }));
 
@@ -27,6 +27,10 @@ app.MapGet("/api/sample", () => Results.Json(new
     message = "Network Capture Core API response",
     values = new[] { 10, 20, 30 }
 }));
+
+app.MapGet("/recover/help.html", () => Results.Content(
+    "<!doctype html><html><head><meta charset=\"utf-8\"><title>Recovered Help</title></head><body><h1>RECOVERED HELP RESOURCE</h1><p>This page exists in Test Lab but is not requested during the initial capture.</p></body></html>",
+    "text/html"));
 
 app.MapPost("/api/echo", async (HttpRequest request) =>
 {

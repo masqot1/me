@@ -1,0 +1,158 @@
+name: TrueWebsiteCloner Missing Resource Recovery Gate
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  missing-resource-recovery:
+    name: Gate 0.7 / Local Missing Resource Recovery
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Setup .NET 10 SDK
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Setup Node.js 24
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+
+      - name: Build TrueWebsiteCloner
+        shell: pwsh
+        run: ./scripts/Install-Dev.ps1
+
+      - name: Install Puppeteer and Chrome for Testing
+        shell: pwsh
+        run: |
+          Push-Location ./tests/runtime-gate-0.2B
+          try {
+            npm install --no-audit --no-fund
+            if ($LASTEXITCODE -ne 0) { throw "npm install failed with exit code $LASTEXITCODE" }
+          }
+          finally { Pop-Location }
+
+      - name: Validate recovery safety policy
+        shell: pwsh
+        run: |
+          $source = Get-Content './src/TrueWebsiteCloner.Core/MissingResourceRecovery.cs' -Raw
+          foreach ($required in @('UseCookies = false','AllowAutoRedirect = false','MaxRecoveryItems = 16','MaxRecoveredBodyBytes = 512 * 1024','IsLoopbackHttp','HasSensitiveQuery')) {
+            if ($source -notmatch [regex]::Escape($required)) { throw "Recovery safety control missing: $required" }
+          }
+          Write-Host 'PASS  Recovery safety controls are present'
+
+      - name: Capture, recover, rebuild and browser-test
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $gateRoot = Join-Path $env:GITHUB_WORKSPACE 'recovery-gate-output'
+          if (Test-Path $gateRoot) { Remove-Item $gateRoot -Recurse -Force }
+          New-Item -ItemType Directory -Path $gateRoot -Force | Out-Null
+          $env:TWC_PROJECT_ROOT = $gateRoot
+
+          $testLabExe = Join-Path $env:GITHUB_WORKSPACE 'artifacts\testlab\TrueWebsiteCloner.TestLab.exe'
+          $desktopExe = Join-Path $env:GITHUB_WORKSPACE 'artifacts\desktop\TrueWebsiteCloner.exe'
+          $offlineToolExe = Join-Path $env:GITHUB_WORKSPACE 'artifacts\offline-tool\TrueWebsiteCloner.OfflineTool.exe'
+          $recoveryToolExe = Join-Path $env:GITHUB_WORKSPACE 'artifacts\recovery-tool\TrueWebsiteCloner.RecoveryTool.exe'
+          $runtimeExe = Join-Path $env:GITHUB_WORKSPACE 'artifacts\local-runtime\TrueWebsiteCloner.LocalRuntime.exe'
+          $bridgeInfo = Join-Path $env:LOCALAPPDATA 'TrueWebsiteCloner\runtime\bridge-info.json'
+          $testLab = $null
+          $desktop = $null
+          $runtime = $null
+
+          try {
+            $testLab = Start-Process -FilePath $testLabExe -PassThru -WindowStyle Hidden
+            $ready = $false
+            for ($i = 0; $i -lt 30; $i++) {
+              try { if ((Invoke-RestMethod 'http://127.0.0.1:7843/health' -TimeoutSec 2).ok) { $ready = $true; break } } catch { }
+              Start-Sleep -Milliseconds 500
+            }
+            if (-not $ready) { throw 'Test Lab did not become ready.' }
+
+            $desktop = Start-Process -FilePath $desktopExe -PassThru
+            for ($i = 0; $i -lt 30 -and -not (Test-Path $bridgeInfo); $i++) { Start-Sleep -Milliseconds 500 }
+            if (-not (Test-Path $bridgeInfo)) { throw 'Desktop bridge did not become ready.' }
+
+            Push-Location (Join-Path $env:GITHUB_WORKSPACE 'tests\runtime-gate-0.2B')
+            try {
+              node ./run-v0.3.mjs
+              if ($LASTEXITCODE -ne 0) { throw "Real Chrome capture exited with $LASTEXITCODE" }
+            }
+            finally { Pop-Location }
+
+            $summary = Get-ChildItem $gateRoot -Filter summary.json -Recurse -File | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
+            if (-not $summary) { throw 'Capture summary.json was not found.' }
+            $networkDir = Split-Path $summary.FullName -Parent
+            $captureRoot = Split-Path $networkDir -Parent
+
+            & $offlineToolExe --capture $captureRoot
+            if ($LASTEXITCODE -ne 0) { throw "Initial offline build failed with $LASTEXITCODE" }
+
+            $missingBeforePath = Join-Path $captureRoot 'offline\missing-resources.json'
+            $missingBeforeText = Get-Content $missingBeforePath -Raw
+            if ($missingBeforeText -notmatch '/recover/help.html') { throw 'Expected recover/help.html to be missing before recovery.' }
+
+            & $recoveryToolExe --capture $captureRoot
+            if ($LASTEXITCODE -ne 0) { throw "Recovery Tool exited with $LASTEXITCODE" }
+
+            $recoveryReportPath = Join-Path $captureRoot 'offline\recovery-report.json'
+            $recoveryReport = Get-Content $recoveryReportPath -Raw | ConvertFrom-Json -Depth 30
+            if ($recoveryReport.result -ne 'PASS') { throw 'Recovery report is not PASS.' }
+            if ([int]$recoveryReport.recovered -lt 1) { throw 'Recovery did not add any missing resource.' }
+            if ([int]$recoveryReport.finalMissing -ne 0) { throw "Expected finalMissing=0, got $($recoveryReport.finalMissing)." }
+
+            $missingAfter = Get-Content (Join-Path $captureRoot 'offline\missing-resources.json') -Raw
+            if ($missingAfter -match '/recover/help.html') { throw 'Recovered resource is still reported missing.' }
+
+            $runtime = Start-Process -FilePath $runtimeExe -ArgumentList @('--capture', $captureRoot, '--port', '7853') -PassThru -WindowStyle Hidden
+            $runtimeHealth = $null
+            for ($i = 0; $i -lt 30; $i++) {
+              try { $runtimeHealth = Invoke-RestMethod 'http://127.0.0.1:7853/__twc/health' -TimeoutSec 2; if ($runtimeHealth.ok) { break } } catch { }
+              Start-Sleep -Milliseconds 500
+            }
+            if (-not $runtimeHealth.ok) { throw 'Local Runtime did not become ready.' }
+
+            $recoveredPage = Invoke-WebRequest 'http://127.0.0.1:7853/recover/help.html' -UseBasicParsing
+            if ($recoveredPage.StatusCode -ne 200 -or $recoveredPage.Content -notmatch 'RECOVERED HELP RESOURCE') { throw 'Recovered resource replay failed.' }
+            if ($recoveredPage.Headers['X-TrueWebsiteCloner-Replay'] -ne 'offline') { throw 'Recovered resource is missing replay marker.' }
+
+            Push-Location (Join-Path $env:GITHUB_WORKSPACE 'tests\runtime-gate-0.2B')
+            try {
+              node ./run-v0.7.mjs http://127.0.0.1:7853
+              if ($LASTEXITCODE -ne 0) { throw "Recovery browser smoke exited with $LASTEXITCODE" }
+            }
+            finally { Pop-Location }
+
+            Write-Host 'PASS  Missing link detected after initial real Chrome capture'
+            Write-Host 'PASS  Loopback same-origin resource recovered without credentials'
+            Write-Host 'PASS  Offline tree rebuilt with zero missing references'
+            Write-Host 'PASS  Recovered page replayed by Local Runtime'
+            Write-Host 'PASS  Real Chrome followed recovered link without external traffic'
+            Write-Host 'RESULT: GATE 0.7 PASS'
+          }
+          finally {
+            if ($runtime -and -not $runtime.HasExited) { Stop-Process -Id $runtime.Id -Force -ErrorAction SilentlyContinue }
+            if ($desktop -and -not $desktop.HasExited) { Stop-Process -Id $desktop.Id -Force -ErrorAction SilentlyContinue }
+            if ($testLab -and -not $testLab.HasExited) { Stop-Process -Id $testLab.Id -Force -ErrorAction SilentlyContinue }
+          }
+
+      - name: Upload Gate 0.7 evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: truewebsitecloner-gate-0.7-${{ github.run_number }}
+          path: recovery-gate-output/
+          if-no-files-found: warn
+          retention-days: 14
