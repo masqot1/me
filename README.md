@@ -1,27 +1,19 @@
 # TrueWebsiteCloner
 
-Current development stage: **v0.8 Dependency Graph / Completeness Score**.
+Current development stage: **v0.9 Visual Comparison**.
 
 ## Passed gates
 
-Gates 0.1 through 0.7 have passed on GitHub Actions, including real Chrome capture, response-body storage, offline building, local API replay, source-vs-replay verification, and deterministic missing-resource recovery inside Test Lab.
+Gates 0.1 through 0.8 have passed on GitHub Actions. The project now has real Chrome capture, response-body storage, deterministic offline building, local GET replay, source-vs-replay verification, controlled missing-resource recovery, and an auditable dependency/completeness graph.
 
-## v0.8 scope
+## v0.9 scope
 
-V0.8 builds a dependency graph from captured HTML, CSS and simple literal JavaScript dependencies. Each resource becomes a node and each discovered relationship becomes an edge. Nodes identify captured, recovered, missing or external resources.
+V0.9 renders the project-owned Test Lab and its offline replay in the same Chrome for Testing environment at 1280×900. Both pages reach the same deterministic API-rendered state before screenshots are taken.
 
-The project now emits both a raw completeness score and a weighted score. Documents, stylesheets, scripts and API dependencies have greater weight than decorative images, while the exact weights are written into the report so the score is auditable.
+Evidence includes `source.png`, `offline.png`, `diff.png`, and `visual-report.json`. The visual gate uses a 0.15% maximum mismatched-pixel threshold and fails if the offline browser makes an HTTP request outside its Local Runtime origin.
 
-Outputs:
-
-- `offline/dependency-graph.json`
-- `offline/dependency-graph.dot`
-- `offline/completeness-report.json`
-
-Gate 0.8 requires a real Chrome Test Lab capture, V0.7 recovery, the expected HTML and JavaScript edges, zero missing same-origin dependencies, and 100% raw and weighted completeness.
-
-See `docs/GATE-0.8.md` for details.
+See `docs/GATE-0.9.md` for the rendering and comparison rules.
 
 ## Next stage
 
-After Gate 0.8 passes, the next stage is visual comparison: render source and offline pages in controlled Chrome sessions and measure visible layout/render differences with an explicit PASS threshold.
+After Gate 0.9 passes, the next stage is a deterministic capture diff/update engine that can compare two project snapshots and explain added, removed, changed, recovered and visually changed resources without overwriting history.

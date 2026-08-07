@@ -1,8 +1,10 @@
 {
-  "name": "truewebsitecloner-runtime-gate-0-2b",
+  "name": "truewebsitecloner-runtime-gates",
   "private": true,
   "type": "module",
   "dependencies": {
+    "pixelmatch": "7.1.0",
+    "pngjs": "7.0.0",
     "puppeteer": "25.4.0"
   }
 }
