@@ -1,19 +1,21 @@
 # TrueWebsiteCloner
 
-Current development stage: **v0.9 Visual Comparison**.
+Current development stage: **v0.10 Immutable Snapshot Diff / Update Engine**.
 
 ## Passed gates
 
-Gates 0.1 through 0.8 have passed on GitHub Actions. The project now has real Chrome capture, response-body storage, deterministic offline building, local GET replay, source-vs-replay verification, controlled missing-resource recovery, and an auditable dependency/completeness graph.
+Gates 0.1 through 0.9 have passed on GitHub Actions, including the real-Chrome visual comparison gate.
 
-## v0.9 scope
+## v0.10 scope
 
-V0.9 renders the project-owned Test Lab and its offline replay in the same Chrome for Testing environment at 1280×900. Both pages reach the same deterministic API-rendered state before screenshots are taken.
+V0.10 creates immutable project snapshots and compares them without rewriting history. Snapshot resources are identified by normalized URL and SHA-256 content hash, with MIME type, resource type, byte length, recovery state and local path preserved.
 
-Evidence includes `source.png`, `offline.png`, `diff.png`, and `visual-report.json`. The visual gate uses a 0.15% maximum mismatched-pixel threshold and fails if the offline browser makes an HTTP request outside its Local Runtime origin.
+Diff reports classify resources as added, removed, changed or unchanged and include completeness, weighted-completeness and visual-mismatch deltas. Reusing an existing snapshot label is rejected.
 
-See `docs/GATE-0.9.md` for the rendering and comparison rules.
+Outputs are stored under `history/<label>/snapshot.json` and user-selected diff report paths.
+
+See `docs/GATE-0.10.md` for the immutable-history rules.
 
 ## Next stage
 
-After Gate 0.9 passes, the next stage is a deterministic capture diff/update engine that can compare two project snapshots and explain added, removed, changed, recovered and visually changed resources without overwriting history.
+After Gate 0.10 passes, the next stage is portable project export/import with integrity hashes, so a verified offline project can be moved or archived without losing its history and reports.

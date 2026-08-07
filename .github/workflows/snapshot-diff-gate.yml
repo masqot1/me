@@ -1,0 +1,40 @@
+name: TrueWebsiteCloner Snapshot Diff Gate
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  snapshot-diff:
+    name: Gate 0.10 / Immutable Snapshot Diff
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+      - name: Setup .NET 10 SDK
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+      - name: Build TrueWebsiteCloner
+        shell: pwsh
+        run: ./scripts/Install-Dev.ps1
+      - name: Run Snapshot Diff Gate 0.10
+        shell: pwsh
+        env:
+          TWC_SNAPSHOT_GATE_OUTPUT: ${{ github.workspace }}\snapshot-diff-gate-output
+        run: dotnet run --project ./tests/TrueWebsiteCloner.SnapshotDiffGateTests/TrueWebsiteCloner.SnapshotDiffGateTests.csproj -c Release
+      - name: Upload Gate 0.10 evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: truewebsitecloner-gate-0.10-${{ github.run_number }}
+          path: snapshot-diff-gate-output/
+          if-no-files-found: warn
+          retention-days: 14
