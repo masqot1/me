@@ -1,7 +1,9 @@
 using Microsoft.Win32;
 using System.Diagnostics;
 using System.IO;
+using System.Text.Json;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Threading;
 using TrueWebsiteCloner.Core;
@@ -14,6 +16,7 @@ public partial class MainWindow : Window
     private readonly BridgeServer _bridge = new();
     private readonly OfflineSiteBuilder _offlineBuilder = new();
     private readonly ProjectCatalogService _catalogService = new();
+    private readonly ProjectDiagnosticsService _diagnosticsService = new();
     private readonly WorkspacePortableOperations _workspacePortable = new();
     private readonly DispatcherTimer _statusTimer = new() { Interval = TimeSpan.FromSeconds(1) };
     private IReadOnlyList<ProjectCatalogEntry> _catalogEntries = [];
@@ -42,7 +45,7 @@ public partial class MainWindow : Window
         {
             await _bridge.StartAsync();
             Log($"Desktop bridge listening on 127.0.0.1:{_bridge.Port}");
-            Log("TrueWebsiteCloner v0.12: project catalog workspace ready.");
+            Log("TrueWebsiteCloner v0.13: project diagnostics dashboard ready.");
         }
         catch (Exception ex) { Log("Bridge start failed: " + ex.Message); }
 
@@ -111,10 +114,79 @@ public partial class MainWindow : Window
         ProjectCatalogGrid.ItemsSource = _catalogEntries;
         CatalogCountText.Text = $"{_catalogEntries.Count} project{(_catalogEntries.Count == 1 ? string.Empty : "s")}";
         Log($"CATALOG PASS: {_catalogEntries.Count} projects; scanned={result.ScannedDirectories}; skipped reparse={result.SkippedReparsePoints}");
+        if (_catalogEntries.Count > 0 && ProjectCatalogGrid.SelectedItem is null) ProjectCatalogGrid.SelectedIndex = 0;
+        ShowSelectedDiagnostics();
     }
 
     private ProjectCatalogEntry? SelectedProject => ProjectCatalogGrid.SelectedItem as ProjectCatalogEntry;
     private string? ActiveProjectPath => SelectedProject?.FullPath ?? _catalogEntries.FirstOrDefault()?.FullPath;
+
+    private void ProjectCatalogGrid_SelectionChanged(object sender, SelectionChangedEventArgs e) => ShowSelectedDiagnostics();
+
+    private void ShowSelectedDiagnostics()
+    {
+        var project = SelectedProject;
+        if (project is null)
+        {
+            DiagnosticsStatusText.Text = "NOT_RUN";
+            DiagnosticsNextActionText.Text = "Select a project and run diagnostics.";
+            DiagnosticsStatusText.Foreground = System.Windows.Media.Brushes.Gray;
+            return;
+        }
+
+        var path = Path.Combine(project.FullPath, ProjectDiagnosticsService.DiagnosticsDirectoryName, ProjectDiagnosticsService.DiagnosticsFileName);
+        if (!File.Exists(path))
+        {
+            DiagnosticsStatusText.Text = "NOT_RUN";
+            DiagnosticsNextActionText.Text = "Run diagnostics for the selected project.";
+            DiagnosticsStatusText.Foreground = System.Windows.Media.Brushes.Gray;
+            return;
+        }
+
+        try
+        {
+            using var doc = JsonDocument.Parse(File.ReadAllText(path));
+            var root = doc.RootElement;
+            var status = root.TryGetProperty("overallStatus", out var statusValue) ? statusValue.GetString() ?? "NOT_RUN" : "NOT_RUN";
+            var readiness = root.TryGetProperty("readiness", out var readinessValue) ? readinessValue.GetString() ?? string.Empty : string.Empty;
+            var action = root.TryGetProperty("nextAction", out var actionValue) ? actionValue.GetString() ?? "Run diagnostics." : "Run diagnostics.";
+            DiagnosticsStatusText.Text = string.IsNullOrWhiteSpace(readiness) ? status : $"{status} · {readiness}";
+            DiagnosticsNextActionText.Text = action;
+            DiagnosticsStatusText.Foreground = status switch
+            {
+                "PASS" => System.Windows.Media.Brushes.LightGreen,
+                "WARNING" => System.Windows.Media.Brushes.Gold,
+                "FAIL" => System.Windows.Media.Brushes.OrangeRed,
+                _ => System.Windows.Media.Brushes.Gray
+            };
+        }
+        catch
+        {
+            DiagnosticsStatusText.Text = "INVALID";
+            DiagnosticsNextActionText.Text = "Run diagnostics again to regenerate the health report.";
+            DiagnosticsStatusText.Foreground = System.Windows.Media.Brushes.OrangeRed;
+        }
+    }
+
+    private async void RunDiagnosticsButton_Click(object sender, RoutedEventArgs e)
+    {
+        var project = SelectedProject;
+        if (project is null) { Log("DIAGNOSTICS: select a project first."); return; }
+        var result = await _diagnosticsService.RunAsync(project.FullPath);
+        DiagnosticsStatusText.Text = $"{result.OverallStatus} · {result.Readiness}";
+        DiagnosticsNextActionText.Text = result.NextAction;
+        DiagnosticsStatusText.Foreground = result.OverallStatus switch
+        {
+            "PASS" => System.Windows.Media.Brushes.LightGreen,
+            "WARNING" => System.Windows.Media.Brushes.Gold,
+            "FAIL" => System.Windows.Media.Brushes.OrangeRed,
+            _ => System.Windows.Media.Brushes.Gray
+        };
+        Log($"DIAGNOSTICS {result.OverallStatus}: PASS={result.PassCount}, WARNING={result.WarningCount}, FAIL={result.FailCount}, NOT_RUN={result.NotRunCount}");
+        foreach (var check in result.Checks.Where(check => check.Status is "FAIL" or "WARNING"))
+            Log($"  {check.Status} {check.Code}: {check.Message} → {check.RecommendedAction}");
+        Log("Diagnostics report: " + result.ReportPath);
+    }
 
     private void OpenSelectedProjectButton_Click(object sender, RoutedEventArgs e) => OpenSelectedProject();
     private void ProjectCatalogGrid_MouseDoubleClick(object sender, MouseButtonEventArgs e) => OpenSelectedProject();
@@ -142,9 +214,7 @@ public partial class MainWindow : Window
         };
         if (dialog.ShowDialog(this) != true) return;
         var result = await _workspacePortable.ExportAsync(project.FullPath, dialog.FileName);
-        Log(result.Ok
-            ? $"EXPORT PASS: {result.FileCount} files; SHA-256={result.PackageSha256}; {dialog.FileName}"
-            : "EXPORT FAIL: " + result.Message);
+        Log(result.Ok ? $"EXPORT PASS: {result.FileCount} files; SHA-256={result.PackageSha256}; {dialog.FileName}" : "EXPORT FAIL: " + result.Message);
     }
 
     private async void ImportPackageButton_Click(object sender, RoutedEventArgs e)
@@ -193,11 +263,9 @@ public partial class MainWindow : Window
             if (capture is null) { Log("LOCAL RUNTIME: no indexed project was found."); return; }
             var build = await BuildOfflineAsync(capture, openFolder: false);
             if (!build) return;
-
             var exe = DevelopmentLocator.FindLocalRuntimeExe();
             if (exe is null) { Log("LOCAL RUNTIME: executable not found. Run Install-Dev.ps1 first."); return; }
             if (_localRuntimeProcess is { HasExited: false }) { try { _localRuntimeProcess.Kill(entireProcessTree: true); } catch { } }
-
             var startInfo = new ProcessStartInfo(exe) { UseShellExecute = false, CreateNoWindow = true };
             startInfo.ArgumentList.Add("--capture"); startInfo.ArgumentList.Add(capture);
             startInfo.ArgumentList.Add("--port"); startInfo.ArgumentList.Add("7850");

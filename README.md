@@ -1,21 +1,21 @@
 # TrueWebsiteCloner
 
-Current development stage: **v0.12 Project Catalog / Workspace Index**.
+Current development stage: **v0.13 Project Diagnostics Dashboard**.
 
 ## Passed gates
 
-Gates 0.1 through 0.11 have passed on GitHub Actions. The project includes real Chrome capture, response bodies, deterministic offline building, loopback replay, verification, controlled recovery, dependency/completeness analysis, visual diffing, immutable snapshots, and tamper-resistant portable export/import.
+Gates 0.1 through 0.12 have passed on GitHub Actions. The Windows app includes a bounded project catalog/workspace in addition to capture, response bodies, offline building, local replay, verification, recovery, dependency scoring, visual comparison, immutable snapshots and portable project integrity.
 
-## v0.12 scope
+## v0.13 scope
 
-The Windows Desktop now has a project catalog for the configured workspace. It shows each capture's status, target, completeness, visual mismatch, history count, captured bodies and missing resources, and provides Refresh, Open, Export and Import operations from the same view.
+V0.13 adds one machine-readable health model per project at `_diagnostics/project-health.json`. It normalizes evidence from all previous stages into `PASS`, `WARNING`, `FAIL` and `NOT_RUN` checks, each with a relative evidence path and a recommended next action.
 
-Catalog discovery never scans outside the selected workspace. Reparse points are skipped, depth and directory counts are bounded, and scanning stops at each recognized capture root. Persisted catalog metadata uses relative paths only.
+The overall readiness becomes `READY`, `NEEDS_REVIEW` or `NOT_READY`. Reports contain no absolute project paths or timestamps and are deterministic for unchanged evidence.
 
-Portable packages imported through V0.11 are integrity-verified before becoming visible in the workspace. Workspace export also supports re-exporting an imported project without recursively embedding `_twc_package` metadata.
+The Desktop workspace provides **Run Diagnostics** for the selected project and displays its latest Health/Readiness plus the highest-priority next action. Diagnostics only read local project evidence; they do not restart capture or contact any external site.
 
-See `docs/GATE-0.12.md` for scan and catalog rules.
+See `docs/GATE-0.13.md` for the health model.
 
 ## Next stage
 
-After Gate 0.12 passes, the next stage is a project diagnostics dashboard: normalize all gate/report results into one machine-readable health model and surface actionable failures, warnings, evidence paths and recommended next actions per project.
+After Gate 0.13 passes, the next stage is release-readiness and project validation orchestration: run the applicable local project checks in dependency order and produce one final readiness manifest without silently re-running capture or contacting external sites.
