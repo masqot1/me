@@ -9,5 +9,6 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\TrueWebsiteCloner.Shared\TrueWebsiteCloner.Shared.csproj" />
+    <ProjectReference Include="..\TrueWebsiteCloner.Core\TrueWebsiteCloner.Core.csproj" />
   </ItemGroup>
 </Project>

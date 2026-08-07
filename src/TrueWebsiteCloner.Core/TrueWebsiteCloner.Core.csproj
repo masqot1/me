@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>TrueWebsiteCloner.Core</AssemblyName>
+    <RootNamespace>TrueWebsiteCloner.Core</RootNamespace>
+  </PropertyGroup>
+</Project>

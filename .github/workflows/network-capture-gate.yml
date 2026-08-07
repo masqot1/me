@@ -1,0 +1,59 @@
+name: TrueWebsiteCloner Network Capture Gate
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  network-capture-core:
+    name: Gate 0.2 / Metadata Capture Core
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 10 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Build Windows foundation
+        shell: pwsh
+        run: ./scripts/Install-Dev.ps1
+
+      - name: Validate extension capture permissions
+        shell: pwsh
+        run: |
+          $manifest = Get-Content './chrome-extension/manifest.json' -Raw | ConvertFrom-Json
+          if ($manifest.version -ne '0.2.0') { throw "Expected extension v0.2.0" }
+          foreach ($permission in @('nativeMessaging','storage','tabs','debugger')) {
+            if ($manifest.permissions -notcontains $permission) { throw "Missing permission: $permission" }
+          }
+          node --check ./chrome-extension/service-worker.js
+          node --check ./chrome-extension/popup.js
+          Write-Host 'PASS  Manifest V3 capture permissions'
+          Write-Host 'PASS  Extension JavaScript syntax'
+
+      - name: Run metadata capture engine gate
+        shell: pwsh
+        env:
+          TWC_GATE_OUTPUT: ${{ github.workspace }}\gate-output
+        run: dotnet run --project ./tests/TrueWebsiteCloner.GateTests/TrueWebsiteCloner.GateTests.csproj -c Release
+
+      - name: Upload Gate 0.2 evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: truewebsitecloner-gate-0.2-${{ github.run_number }}
+          path: |
+            gate-output/
+            artifacts/
+          if-no-files-found: warn
+          retention-days: 14

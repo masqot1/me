@@ -1,12 +1,14 @@
 {
   "manifest_version": 3,
   "name": "TrueWebsiteCloner Bridge",
-  "version": "0.1.0",
-  "description": "Development bridge between Google Chrome and TrueWebsiteCloner for Windows.",
+  "version": "0.2.0",
+  "description": "Chrome capture bridge for TrueWebsiteCloner on Windows.",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA1Ei+jgZ7zKKNLxINZT6KUD1jBA053nVVKbIcS7i4BWlspYua9tvroz/VQMDbat1h7G8GM+QhPOlC5EUB4dmRF+gpy9nmFes9PhN652gMXBTBjQR2g+1ERE+57x0Bnr/wYfZEYpKt0I2rwerar4U0m6AtsIOZHjruNp1xW24qYR1RULXt6ssQgFOA+b5nsif/FmCjb9Ym1U866u3OwkyYaqStcXolHWiPsS7LRHlrR29EUkXwQNJtjAnXp75hSKrxBWmdynMMrxA/V87DIj7IcZiqYj1x6btfUU+QbIgrve4LcO9v7to8UE2uKJLBzOm26qVl9HqAnZ+wkKtzftPuEQIDAQAB",
   "permissions": [
     "nativeMessaging",
-    "storage"
+    "storage",
+    "tabs",
+    "debugger"
   ],
   "background": {
     "service_worker": "service-worker.js"
