@@ -1,0 +1,106 @@
+name: TrueWebsiteCloner Foundation Gate
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  foundation-gate:
+    name: Gate 0.1 / Windows Foundation
+    runs-on: windows-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 10 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Show environment
+        shell: pwsh
+        run: |
+          dotnet --info
+          Write-Host "Runner: $env:RUNNER_OS"
+          Write-Host "PowerShell: $($PSVersionTable.PSVersion)"
+
+      - name: Build and register development foundation
+        shell: pwsh
+        run: ./scripts/Install-Dev.ps1
+
+      - name: Run static Gate 0.1 checks
+        shell: pwsh
+        run: ./tests/Test-Foundation.ps1
+
+      - name: Start Test Lab
+        shell: pwsh
+        run: |
+          $exe = Join-Path $PWD 'artifacts/testlab/TrueWebsiteCloner.TestLab.exe'
+          if (-not (Test-Path $exe)) { throw "Test Lab executable not found: $exe" }
+          $process = Start-Process -FilePath $exe -PassThru -WindowStyle Hidden
+          $process.Id | Set-Content -Path "$env:RUNNER_TEMP/testlab.pid"
+          Start-Sleep -Seconds 3
+
+      - name: Verify Test Lab health and API
+        shell: pwsh
+        run: |
+          $health = Invoke-RestMethod -Uri 'http://127.0.0.1:7843/health' -Method Get -TimeoutSec 10
+          if (-not $health.ok) { throw 'Test Lab /health did not return ok=true' }
+          if ($health.service -ne 'TrueWebsiteCloner.TestLab') { throw "Unexpected service: $($health.service)" }
+
+          $sample = Invoke-RestMethod -Uri 'http://127.0.0.1:7843/api/sample' -Method Get -TimeoutSec 10
+          if ($sample.source -ne 'test-lab') { throw "Unexpected API source: $($sample.source)" }
+
+          $payload = @{ hello = 'github-actions'; gate = '0.1' } | ConvertTo-Json
+          $echo = Invoke-RestMethod -Uri 'http://127.0.0.1:7843/api/echo' -Method Post -ContentType 'application/json' -Body $payload -TimeoutSec 10
+          if ($echo.received.hello -ne 'github-actions') { throw 'POST /api/echo validation failed' }
+
+          Write-Host 'PASS  Test Lab /health'
+          Write-Host 'PASS  Test Lab /api/sample'
+          Write-Host 'PASS  Test Lab /api/echo'
+
+      - name: Write CI gate report
+        if: always()
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path 'ci-report' -Force | Out-Null
+          @{
+            project = 'TrueWebsiteCloner'
+            gate = '0.1'
+            runner = $env:RUNNER_OS
+            workflow = $env:GITHUB_WORKFLOW
+            runId = $env:GITHUB_RUN_ID
+            commit = $env:GITHUB_SHA
+            generatedAtUtc = (Get-Date).ToUniversalTime().ToString('o')
+          } | ConvertTo-Json -Depth 4 | Set-Content 'ci-report/foundation-gate.json'
+
+      - name: Stop Test Lab
+        if: always()
+        shell: pwsh
+        run: |
+          $pidFile = "$env:RUNNER_TEMP/testlab.pid"
+          if (Test-Path $pidFile) {
+            $testLabPid = Get-Content $pidFile | Select-Object -First 1
+            if ($testLabPid) {
+              Stop-Process -Id ([int]$testLabPid) -Force -ErrorAction SilentlyContinue
+            }
+          }
+
+      - name: Upload build and gate report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: truewebsitecloner-gate-0.1-${{ github.run_number }}
+          path: |
+            ci-report/
+            artifacts/
+          if-no-files-found: warn
+          retention-days: 14
