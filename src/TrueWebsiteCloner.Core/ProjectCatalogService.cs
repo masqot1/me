@@ -96,7 +96,9 @@ public sealed class ProjectCatalogService
                     if (!IsInsideRoot(workspaceRoot, child)) continue;
                     try
                     {
-                        if (IsReparsePoint(new DirectoryInfo(child))) { skippedReparse++; continue; }
+                        var childInfo = new DirectoryInfo(child);
+                        if (string.Equals(childInfo.Name, CatalogDirectoryName, StringComparison.OrdinalIgnoreCase)) continue;
+                        if (IsReparsePoint(childInfo)) { skippedReparse++; continue; }
                         stack.Push((child, depth + 1));
                     }
                     catch { }
@@ -113,9 +115,6 @@ public sealed class ProjectCatalogService
             {
                 version = "0.12.0",
                 projectCount = projects.Count,
-                scannedDirectories = scanned,
-                skippedReparsePoints = skippedReparse,
-                skippedDepthLimit = skippedDepth,
                 projects = projects.Select(project => new
                 {
                     project.ProjectId,
