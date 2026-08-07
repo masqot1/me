@@ -38,7 +38,9 @@ Require(export1.Ok, export1.Message);
 var export2 = await portable.ExportAsync(project, package2);
 Require(export2.Ok, export2.Message);
 Require(export1.ContentRootSha256 == export2.ContentRootSha256, "Content root is not deterministic");
-Require((await File.ReadAllBytesAsync(package1)).SequenceEqual(await File.ReadAllBytesAsync(package2)), "Repeated export did not produce byte-identical package");
+var package1Bytes = await File.ReadAllBytesAsync(package1);
+var package2Bytes = await File.ReadAllBytesAsync(package2);
+Require(package1Bytes.SequenceEqual(package2Bytes), "Repeated export did not produce byte-identical package");
 Require(export1.PackageSha256 == export2.PackageSha256, "Repeated export package SHA-256 differs");
 Require(File.Exists(package1 + ".sha256"), "Package SHA-256 sidecar missing");
 
@@ -58,7 +60,9 @@ foreach (var original in originalFiles)
     var relative = Path.GetRelativePath(project, original);
     var importedFile = Path.Combine(imported, relative);
     Require(File.Exists(importedFile), "Imported file missing: " + relative);
-    Require((await File.ReadAllBytesAsync(original)).SequenceEqual(await File.ReadAllBytesAsync(importedFile)), "Imported bytes differ: " + relative);
+    var originalBytes = await File.ReadAllBytesAsync(original);
+    var importedBytes = await File.ReadAllBytesAsync(importedFile);
+    Require(originalBytes.SequenceEqual(importedBytes), "Imported bytes differ: " + relative);
 }
 
 var overwriteAttempt = await portable.ImportAsync(package1, imported);
