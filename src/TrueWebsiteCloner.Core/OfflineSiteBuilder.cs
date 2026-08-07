@@ -18,6 +18,7 @@ public sealed class OfflineSiteBuilder
     private sealed record BodyEntry(string RequestId, string Url, string MimeType, string ResourceType, string File);
     private sealed record ResourceMap(string Url, string MimeType, string ResourceType, string SourceFile, string LocalPath);
     private sealed record MissingResource(string SourceUrl, string Reference, string ResolvedUrl);
+    private sealed class RewriteCounter { public int Value; }
 
     private static readonly Regex HtmlReferenceRegex = new(
         "(?<prefix>\\b(?:src|href|poster)\\s*=\\s*)(?<quote>[\\\"'])(?<url>[^\\\"']+)(?:\\k<quote>)",
@@ -75,7 +76,7 @@ public sealed class OfflineSiteBuilder
         var mappings = BuildMappings(captureRoot, entries);
         var mapByUrl = mappings.ToDictionary(m => NormalizeUrl(m.Url), StringComparer.OrdinalIgnoreCase);
         var missing = new List<MissingResource>();
-        var rewritten = 0;
+        var rewriteCounter = new RewriteCounter();
 
         foreach (var mapping in mappings)
         {
@@ -91,9 +92,9 @@ public sealed class OfflineSiteBuilder
             {
                 var text = await File.ReadAllTextAsync(sourcePath, cancellationToken);
                 if (IsHtml(mapping.MimeType))
-                    text = RewriteHtml(text, mapping, targetUri, mapByUrl, missing, ref rewritten);
+                    text = RewriteHtml(text, mapping, targetUri, mapByUrl, missing, rewriteCounter);
                 else
-                    text = RewriteCss(text, mapping, targetUri, mapByUrl, missing, ref rewritten);
+                    text = RewriteCss(text, mapping, targetUri, mapByUrl, missing, rewriteCounter);
                 await File.WriteAllTextAsync(destinationPath, text, new UTF8Encoding(false), cancellationToken);
             }
             else
@@ -115,7 +116,7 @@ public sealed class OfflineSiteBuilder
             targetUrl = targetUri.AbsoluteUri,
             targetOrigin = targetUri.GetLeftPart(UriPartial.Authority),
             resourceCount = mappings.Count,
-            rewrittenReferenceCount = rewritten,
+            rewrittenReferenceCount = rewriteCounter.Value,
             missingReferenceCount = uniqueMissing.Length,
             htmlCssRewriting = true,
             javascriptRewriting = false,
@@ -134,16 +135,20 @@ public sealed class OfflineSiteBuilder
             JsonSerializer.Serialize(uniqueMissing, JsonOptionsIndented),
             new UTF8Encoding(false), cancellationToken);
 
-        return new(true, "Offline resource tree built.", offlineRoot, mappings.Count, rewritten, uniqueMissing.Length);
+        return new(true, "Offline resource tree built.", offlineRoot, mappings.Count, rewriteCounter.Value, uniqueMissing.Length);
     }
 
     private static List<ResourceMap> BuildMappings(string captureRoot, IReadOnlyList<BodyEntry> entries)
     {
         var mappings = new List<ResourceMap>();
         var usedPaths = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var seenUrls = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var entry in entries)
         {
+            var normalizedUrl = NormalizeUrl(entry.Url);
+            if (!seenUrls.Add(normalizedUrl)) continue;
+
             var uri = new Uri(entry.Url);
             var localPath = UrlToLocalPath(uri, entry.MimeType, entry.ResourceType);
             if (usedPaths.TryGetValue(localPath, out var existingUrl) && !string.Equals(existingUrl, entry.Url, StringComparison.OrdinalIgnoreCase))
@@ -166,14 +171,14 @@ public sealed class OfflineSiteBuilder
         Uri targetUri,
         IReadOnlyDictionary<string, ResourceMap> mapByUrl,
         List<MissingResource> missing,
-        ref int rewritten)
+        RewriteCounter counter)
     {
         return HtmlReferenceRegex.Replace(text, match =>
         {
             var original = match.Groups["url"].Value;
             var replacement = ResolveReference(source, original, targetUri, mapByUrl, missing);
             if (replacement is null || replacement == original) return match.Value;
-            rewritten++;
+            counter.Value++;
             return match.Groups["prefix"].Value + match.Groups["quote"].Value + replacement + match.Groups["quote"].Value;
         });
     }
@@ -184,14 +189,14 @@ public sealed class OfflineSiteBuilder
         Uri targetUri,
         IReadOnlyDictionary<string, ResourceMap> mapByUrl,
         List<MissingResource> missing,
-        ref int rewritten)
+        RewriteCounter counter)
     {
         text = CssUrlRegex.Replace(text, match =>
         {
             var original = match.Groups["url"].Value.Trim();
             var replacement = ResolveReference(source, original, targetUri, mapByUrl, missing);
             if (replacement is null || replacement == original) return match.Value;
-            rewritten++;
+            counter.Value++;
             var quote = match.Groups["quote"].Value;
             return $"url({quote}{replacement}{quote})";
         });
@@ -201,7 +206,7 @@ public sealed class OfflineSiteBuilder
             var original = match.Groups["url"].Value;
             var replacement = ResolveReference(source, original, targetUri, mapByUrl, missing);
             if (replacement is null || replacement == original) return match.Value;
-            rewritten++;
+            counter.Value++;
             return match.Groups["prefix"].Value + match.Groups["quote"].Value + replacement + match.Groups["quote"].Value;
         });
     }
