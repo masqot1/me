@@ -17,6 +17,7 @@ async function runSampleApi() {
 
 button.addEventListener('click', runSampleApi);
 
-if (new URLSearchParams(location.search).get('gate') === '0.2B') {
+const gate = new URLSearchParams(location.search).get('gate');
+if (gate === '0.2B' || gate === '0.3') {
   setTimeout(runSampleApi, 1200);
 }

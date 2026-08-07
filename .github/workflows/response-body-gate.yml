@@ -1,0 +1,143 @@
+name: TrueWebsiteCloner Response Body Gate
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  response-body-gate:
+    name: Gate 0.3 / Same-Origin Response Bodies
+    runs-on: windows-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Setup .NET 10 SDK
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Setup Node.js 24
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+
+      - name: Build and register TrueWebsiteCloner
+        shell: pwsh
+        run: ./scripts/Install-Dev.ps1
+
+      - name: Validate v0.3 extension
+        shell: pwsh
+        run: |
+          $manifest = Get-Content './chrome-extension/manifest.json' -Raw | ConvertFrom-Json
+          if ([version]$manifest.version -lt [version]'0.3.0') { throw "Expected extension version >= 0.3.0" }
+          node --check ./chrome-extension/service-worker.js
+          node --check ./chrome-extension/runtime-gate-0.3.js
+          Write-Host 'PASS  v0.3 extension syntax'
+
+      - name: Run response-body core gate
+        shell: pwsh
+        env:
+          TWC_BODY_GATE_OUTPUT: ${{ github.workspace }}\body-gate-output
+        run: dotnet run --project ./tests/TrueWebsiteCloner.BodyGateTests/TrueWebsiteCloner.BodyGateTests.csproj -c Release
+
+      - name: Install Puppeteer and Chrome for Testing
+        shell: pwsh
+        run: |
+          Push-Location ./tests/runtime-gate-0.2B
+          try {
+            npm install --no-audit --no-fund
+            if ($LASTEXITCODE -ne 0) { throw "npm install failed with exit code $LASTEXITCODE" }
+          }
+          finally { Pop-Location }
+
+      - name: Run real Chrome response-body gate
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $gateRoot = Join-Path $env:GITHUB_WORKSPACE 'body-runtime-output'
+          if (Test-Path $gateRoot) { Remove-Item $gateRoot -Recurse -Force }
+          New-Item -ItemType Directory -Path $gateRoot -Force | Out-Null
+          $env:TWC_PROJECT_ROOT = $gateRoot
+
+          $testLabExe = Join-Path $env:GITHUB_WORKSPACE 'artifacts\testlab\TrueWebsiteCloner.TestLab.exe'
+          $desktopExe = Join-Path $env:GITHUB_WORKSPACE 'artifacts\desktop\TrueWebsiteCloner.exe'
+          $bridgeInfo = Join-Path $env:LOCALAPPDATA 'TrueWebsiteCloner\runtime\bridge-info.json'
+          $testLab = $null
+          $desktop = $null
+
+          try {
+            $testLab = Start-Process -FilePath $testLabExe -PassThru -WindowStyle Hidden
+            $ready = $false
+            for ($i = 0; $i -lt 30; $i++) {
+              try { if ((Invoke-RestMethod 'http://127.0.0.1:7843/health' -TimeoutSec 2).ok) { $ready = $true; break } } catch { }
+              Start-Sleep -Milliseconds 500
+            }
+            if (-not $ready) { throw 'Test Lab did not become ready.' }
+
+            $desktop = Start-Process -FilePath $desktopExe -PassThru
+            for ($i = 0; $i -lt 30 -and -not (Test-Path $bridgeInfo); $i++) { Start-Sleep -Milliseconds 500 }
+            if (-not (Test-Path $bridgeInfo)) { throw 'Desktop bridge did not become ready.' }
+
+            Push-Location (Join-Path $env:GITHUB_WORKSPACE 'tests\runtime-gate-0.2B')
+            try {
+              node ./run-v0.3.mjs
+              if ($LASTEXITCODE -ne 0) { throw "Gate 0.3 Puppeteer test exited with $LASTEXITCODE" }
+            }
+            finally { Pop-Location }
+
+            $bodiesLog = Get-ChildItem $gateRoot -Filter bodies.jsonl -Recurse -File | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
+            if (-not $bodiesLog) { throw 'bodies.jsonl was not created.' }
+            $bodyDir = Split-Path $bodiesLog.FullName -Parent
+            $captureRoot = Split-Path $bodyDir -Parent
+            $summaryPath = Join-Path $captureRoot '_network\summary.json'
+            $networkPath = Join-Path $captureRoot '_network\network.jsonl'
+            if (-not (Test-Path $summaryPath)) { throw 'summary.json missing.' }
+            if (-not (Test-Path $networkPath)) { throw 'network.jsonl missing.' }
+
+            $manifestText = Get-Content $bodiesLog.FullName -Raw
+            foreach ($needle in @('/api/sample','/styles.css','/app.js')) {
+              if ($manifestText -notmatch [regex]::Escape($needle)) { throw "Expected response body missing from manifest: $needle" }
+            }
+
+            $bodyFiles = @(Get-ChildItem $bodyDir -File | Where-Object { $_.Name -ne 'bodies.jsonl' })
+            if ($bodyFiles.Count -lt 4) { throw "Expected at least 4 response body files; got $($bodyFiles.Count)." }
+            $textFiles = $bodyFiles | Where-Object { $_.Extension -in @('.html','.css','.js','.json','.txt','.svg') }
+            $combined = ($textFiles | ForEach-Object { Get-Content $_.FullName -Raw }) -join "`n"
+            foreach ($marker in @('Foundation Test Lab','runSampleApi','Network Capture Core API response')) {
+              if ($combined -notmatch [regex]::Escape($marker)) { throw "Expected body marker missing: $marker" }
+            }
+
+            $networkText = Get-Content $networkPath -Raw
+            if ($networkText -match 'Network Capture Core API response') { throw 'Response body content leaked into network.jsonl.' }
+            $summary = Get-Content $summaryPath -Raw | ConvertFrom-Json
+            if ([int]$summary.bodyCount -lt 4) { throw "summary bodyCount too low: $($summary.bodyCount)" }
+
+            Write-Host "PASS  Real Chrome saved $($summary.bodyCount) same-origin response bodies"
+            Write-Host 'PASS  HTML/CSS/JS/JSON body markers verified'
+            Write-Host 'PASS  Body content excluded from network.jsonl'
+            Write-Host 'RESULT: GATE 0.3 PASS'
+          }
+          finally {
+            if ($desktop -and -not $desktop.HasExited) { Stop-Process -Id $desktop.Id -Force -ErrorAction SilentlyContinue }
+            if ($testLab -and -not $testLab.HasExited) { Stop-Process -Id $testLab.Id -Force -ErrorAction SilentlyContinue }
+          }
+
+      - name: Upload Gate 0.3 evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: truewebsitecloner-gate-0.3-${{ github.run_number }}
+          path: |
+            body-gate-output/
+            body-runtime-output/
+          if-no-files-found: warn
+          retention-days: 14

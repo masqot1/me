@@ -1,41 +1,30 @@
 # TrueWebsiteCloner
 
-Current development stage: **v0.2 Network Capture Core**.
+Current development stage: **v0.3 Same-Origin Response Body Capture**.
 
-## Passed foundation
+## Passed gates
 
-Gate 0.1 passed on GitHub Actions on Windows: build, Native Host registration, static checks, Test Lab startup and GET/POST API checks.
+- Gate 0.1 — Windows Foundation: PASS
+- Gate 0.2 — Network Metadata Capture Core: PASS
+- Gate 0.2B — Real Chrome + Extension + Native Host + Desktop: PASS
 
-Gate 0.2 also passed on GitHub Actions: the metadata capture engine writes JSONL/session/summary files and rejects sensitive/unapproved fields.
+## v0.3 scope
 
-## v0.2 scope
+V0.3 captures actual response bodies for the explicitly selected HTTP/HTTPS tab while keeping the scope deliberately constrained. Only same-origin `GET` responses are eligible, each decoded body is capped at 512 KiB, and request bodies, cookies and Authorization headers remain excluded.
 
-The Chrome extension can attach to an explicitly selected HTTP/HTTPS tab through `chrome.debugger`, enable the Network domain, and stream **metadata only** to the Windows application through Native Messaging.
-
-Captured metadata includes URL, method, status, resource type, MIME type, protocol, timing, cache/service-worker flags, encoded length and loading success/failure metadata.
-
-This stage intentionally does **not** save request bodies, response bodies, cookies, authorization headers, or arbitrary request/response headers.
-
-The Windows capture engine uses a whitelist, so unapproved fields such as `Authorization`, `Cookie`, `Set-Cookie` and `postData` are discarded even if they are accidentally supplied.
+Captured body types include HTML, CSS, JavaScript, JSON, text, SVG and common web images. Body bytes are stored under `_bodies/`; `network.jsonl` contains body metadata and file paths but never the body content itself.
 
 ## Automated gates
 
 - `.github/workflows/foundation-gate.yml` — Gate 0.1
 - `.github/workflows/network-capture-gate.yml` — Gate 0.2
-- `.github/workflows/runtime-gate-0.2B.yml` — Gate 0.2B real Chrome runtime using Puppeteer + Chrome for Testing
+- `.github/workflows/runtime-gate-0.2B.yml` — Gate 0.2B
+- `.github/workflows/response-body-gate.yml` — Gate 0.3
 
-Gate 0.2B exercises the real extension service worker, `chrome.debugger`, Native Messaging Host, Desktop bridge, and Test Lab on a Windows GitHub runner.
+Gate 0.3 includes an engine test for text/base64 bodies, size and same-origin policy checks, plus a real Chrome/Puppeteer run that saves Test Lab HTML/CSS/JS/JSON and verifies the contents on disk.
 
-## Local Windows runtime gate
-
-You can also run:
-
-```text
-03_RUNTIME_GATE_0_2B.bat
-```
-
-This produces `runtime-gate-output/0.2B/runtime-gate-0.2B-report.json`.
+See `docs/GATE-0.3.md` for the exact policy and PASS criteria.
 
 ## Next stage
 
-Only after Gate 0.2B passes do we implement **v0.3 Response Body Capture**.
+Only after Gate 0.3 passes do we begin the offline resource/path builder stage.

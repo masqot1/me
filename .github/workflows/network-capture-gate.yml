@@ -32,7 +32,7 @@ jobs:
         shell: pwsh
         run: |
           $manifest = Get-Content './chrome-extension/manifest.json' -Raw | ConvertFrom-Json
-          if ($manifest.version -ne '0.2.0') { throw "Expected extension v0.2.0" }
+          if ([version]$manifest.version -lt [version]'0.2.0') { throw "Expected extension version >= 0.2.0" }
           foreach ($permission in @('nativeMessaging','storage','tabs','debugger')) {
             if ($manifest.permissions -notcontains $permission) { throw "Missing permission: $permission" }
           }
