@@ -1,0 +1,120 @@
+name: TrueWebsiteCloner V1.0 Final Aggregate Gate
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  final-aggregate:
+    name: V1.0 Final / Aggregate Gate
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Verify version marker
+        shell: pwsh
+        run: |
+          $version = (Get-Content './VERSION' -Raw).Trim()
+          if ($version -ne '1.0.0') { throw "Expected VERSION 1.0.0; got $version" }
+          Write-Host 'PASS  VERSION = 1.0.0'
+
+      - name: Wait for all TrueWebsiteCloner gates on this commit
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $repo = $env:GITHUB_REPOSITORY
+          $sha = $env:GITHUB_SHA
+          $headers = @{
+            Authorization = "Bearer $env:GITHUB_TOKEN"
+            Accept = 'application/vnd.github+json'
+            'X-GitHub-Api-Version' = '2022-11-28'
+          }
+
+          $expected = @()
+          foreach ($file in Get-ChildItem './.github/workflows' -Filter '*.yml' -File) {
+            if ($file.Name -eq 'v1-final-gate.yml') { continue }
+            $text = Get-Content $file.FullName -Raw
+            if ($text -match '(?m)^name:\s*TrueWebsiteCloner' -and $text -match '(?m)^\s*push\s*:') {
+              $expected += $file.Name
+            }
+          }
+          $expected = @($expected | Sort-Object -Unique)
+          if ($expected.Count -lt 10) { throw "Unexpectedly low gate workflow count: $($expected.Count)" }
+          Write-Host "Waiting for $($expected.Count) TrueWebsiteCloner workflow(s) on $sha"
+
+          $final = @{}
+          for ($attempt = 1; $attempt -le 90; $attempt++) {
+            $pending = @()
+            $failed = @()
+            foreach ($workflow in $expected) {
+              $encoded = [System.Uri]::EscapeDataString($workflow)
+              $url = "https://api.github.com/repos/$repo/actions/workflows/$encoded/runs?branch=main&event=push&per_page=30"
+              $response = Invoke-RestMethod -Uri $url -Headers $headers -Method Get
+              $run = $response.workflow_runs | Where-Object { $_.head_sha -eq $sha } | Sort-Object run_number -Descending | Select-Object -First 1
+              if (-not $run) {
+                $pending += "$workflow (not started)"
+                continue
+              }
+              $final[$workflow] = [ordered]@{ runId = $run.id; status = $run.status; conclusion = $run.conclusion }
+              if ($run.status -ne 'completed') {
+                $pending += "$workflow ($($run.status))"
+              }
+              elseif ($run.conclusion -ne 'success') {
+                $failed += "$workflow ($($run.conclusion))"
+              }
+            }
+
+            if ($failed.Count -gt 0) {
+              Write-Host ($failed -join "`n") -ForegroundColor Red
+              throw "One or more TrueWebsiteCloner gates failed on the final commit."
+            }
+            if ($pending.Count -eq 0) {
+              Write-Host 'PASS  All expected TrueWebsiteCloner workflows completed successfully.' -ForegroundColor Green
+              break
+            }
+            if ($attempt -eq 90) {
+              Write-Host ($pending -join "`n") -ForegroundColor Yellow
+              throw "Timed out waiting for all final-commit gates."
+            }
+            if ($attempt -eq 1 -or $attempt % 6 -eq 0) {
+              Write-Host "Pending ($($pending.Count)): $($pending -join ', ')"
+            }
+            Start-Sleep -Seconds 10
+          }
+
+          New-Item -ItemType Directory -Path './v1-final-output' -Force | Out-Null
+          $report = [ordered]@{
+            format = 'TrueWebsiteCloner.FinalAggregateGate'
+            version = '1.0.0'
+            commit = $sha
+            result = 'PASS'
+            workflowCount = $expected.Count
+            workflows = @($expected | ForEach-Object {
+              [ordered]@{
+                workflow = $_
+                runId = $final[$_].runId
+                status = $final[$_].status
+                conclusion = $final[$_].conclusion
+              }
+            })
+          }
+          [System.IO.File]::WriteAllText('./v1-final-output/v1.0-final-gate.json', ($report | ConvertTo-Json -Depth 10), [System.Text.UTF8Encoding]::new($false))
+          Write-Host 'RESULT: TRUEWEBSITECLONER V1.0 FINAL PASS' -ForegroundColor Green
+
+      - name: Upload final aggregate evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: truewebsitecloner-v1.0-final-${{ github.run_number }}
+          path: v1-final-output/
+          if-no-files-found: warn
+          retention-days: 90
