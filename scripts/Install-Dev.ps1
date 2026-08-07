@@ -4,7 +4,7 @@ $Artifacts = Join-Path $Root "artifacts"
 $ExtensionId = "ggcmdgdiopplpbcfinamhjdkbhiknfbk"
 $HostName = "com.truewebsitecloner.host"
 
-Write-Host "TrueWebsiteCloner v0.5 - development install" -ForegroundColor Cyan
+Write-Host "TrueWebsiteCloner v0.6 - development install" -ForegroundColor Cyan
 
 $dotnet = Get-Command dotnet -ErrorAction SilentlyContinue
 if (-not $dotnet) { throw ".NET SDK was not found. Install .NET 10 SDK first." }
@@ -26,6 +26,9 @@ if ($LASTEXITCODE -ne 0) { throw "Test Lab publish failed." }
 & dotnet publish (Join-Path $Root "src\TrueWebsiteCloner.LocalRuntime\TrueWebsiteCloner.LocalRuntime.csproj") -c Release -r win-x64 --self-contained false -o (Join-Path $Artifacts "local-runtime")
 if ($LASTEXITCODE -ne 0) { throw "Local Runtime publish failed." }
 
+& dotnet publish (Join-Path $Root "src\TrueWebsiteCloner.OfflineTool\TrueWebsiteCloner.OfflineTool.csproj") -c Release -r win-x64 --self-contained false -o (Join-Path $Artifacts "offline-tool")
+if ($LASTEXITCODE -ne 0) { throw "Offline Tool publish failed." }
+
 $NativeDir = Join-Path $env:LOCALAPPDATA "TrueWebsiteCloner\native-host"
 New-Item -ItemType Directory -Path $NativeDir -Force | Out-Null
 $ManifestPath = Join-Path $NativeDir "$HostName.json"
@@ -44,13 +47,6 @@ New-Item -Path $RegPath -Force | Out-Null
 Set-Item -Path $RegPath -Value $ManifestPath
 
 Write-Host ""
-Write-Host "PASS: Native Host, Desktop, Test Lab and Local Runtime published" -ForegroundColor Green
+Write-Host "PASS: Native Host, Desktop, Test Lab, Local Runtime and Offline Tool published" -ForegroundColor Green
 Write-Host "PASS: native host registered for current user" -ForegroundColor Green
 Write-Host "Extension ID: $ExtensionId"
-Write-Host ""
-Write-Host "Next:" -ForegroundColor Yellow
-Write-Host "1. Open chrome://extensions"
-Write-Host "2. Enable Developer mode"
-Write-Host "3. Load unpacked: $(Join-Path $Root 'chrome-extension')"
-Write-Host "4. Run: $(Join-Path $Artifacts 'desktop\TrueWebsiteCloner.exe')"
-Write-Host "5. Capture, Build Offline Site, then Start Offline Runtime from the Desktop app"

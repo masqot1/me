@@ -1,6 +1,6 @@
 # TrueWebsiteCloner
 
-Current development stage: **v0.5 Local Runtime / Recorded GET Replay**.
+Current development stage: **v0.6 Offline Verification / Diff**.
 
 ## Passed gates
 
@@ -9,12 +9,13 @@ Current development stage: **v0.5 Local Runtime / Recorded GET Replay**.
 - Gate 0.2B — Real Chrome + Extension + Native Host + Desktop: PASS
 - Gate 0.3 — Same-Origin Response Body Capture: PASS
 - Gate 0.4 — Offline Resource / Path Builder: PASS
+- Gate 0.5 — Loopback Local Runtime / Recorded GET Replay: PASS
 
-## v0.5 scope
+## v0.6 scope
 
-V0.5 serves a completed offline capture on loopback only. The local page can request recorded same-origin GET resources such as `/api/sample`, and the Local Runtime returns the captured file from disk. A replay miss is never proxied to the original site.
+V0.6 verifies a real Chrome capture of the project-owned Test Lab end-to-end. It rebuilds the offline site, starts the loopback Local Runtime, compares recorded routes with the live Test Lab, writes `offline/verification-report.json`, and finally opens the offline site in Chrome to prove its JavaScript and recorded API call work without external HTTP requests.
 
-Security policy: `127.0.0.1` only, GET/HEAD only, no cookies, no Authorization replay, no request bodies and no outbound HTTP proxy/client.
+The Gate 0.6 comparison is deliberately restricted to loopback endpoints (`127.0.0.1`/localhost). It does not perform verification traffic against external websites.
 
 ## Automated gates
 
@@ -24,9 +25,10 @@ Security policy: `127.0.0.1` only, GET/HEAD only, no cookies, no Authorization r
 - `.github/workflows/response-body-gate.yml` — Gate 0.3
 - `.github/workflows/offline-builder-gate.yml` — Gate 0.4
 - `.github/workflows/local-runtime-gate.yml` — Gate 0.5
+- `.github/workflows/verification-gate.yml` — Gate 0.6
 
-See `docs/GATE-0.5.md` for the exact replay policy and PASS criteria.
+See `docs/GATE-0.6.md` for PASS criteria.
 
 ## Next stage
 
-After Gate 0.5 passes, the next stage is offline verification: compare the local runtime against the deterministic Test Lab and report missing or behaviorally divergent resources.
+After Gate 0.6 passes, the next stage is capture completeness and missing-resource recovery inside the authorized project/test environment.
