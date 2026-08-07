@@ -36,7 +36,15 @@ jobs:
 
       - name: Install Puppeteer and Chrome for Testing
         shell: pwsh
-        run: npm install --prefix ./tests/runtime-gate-0.2B --no-audit --no-fund
+        run: |
+          Push-Location ./tests/runtime-gate-0.2B
+          try {
+            npm install --no-audit --no-fund
+            if ($LASTEXITCODE -ne 0) { throw "npm install failed with exit code $LASTEXITCODE" }
+          }
+          finally {
+            Pop-Location
+          }
 
       - name: Run real Chrome Gate 0.2B
         shell: pwsh
