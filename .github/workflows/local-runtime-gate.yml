@@ -62,9 +62,9 @@ jobs:
             if ($health.outboundProxy -ne $false) { throw 'Local Runtime outboundProxy policy is not false.' }
             if ($health.cookiesReplayed -ne $false -or $health.authorizationReplayed -ne $false) { throw 'Sensitive replay policy mismatch.' }
 
-            $home = Invoke-WebRequest 'http://127.0.0.1:7851/' -UseBasicParsing
-            if ($home.StatusCode -ne 200 -or $home.Content -notmatch 'src="app.js"') { throw 'Offline index replay failed.' }
-            if ($home.Headers['X-TrueWebsiteCloner-Replay'] -ne 'offline') { throw 'Replay response marker header missing.' }
+            $homeResponse = Invoke-WebRequest 'http://127.0.0.1:7851/' -UseBasicParsing
+            if ($homeResponse.StatusCode -ne 200 -or $homeResponse.Content -notmatch 'src="app.js"') { throw 'Offline index replay failed.' }
+            if ($homeResponse.Headers['X-TrueWebsiteCloner-Replay'] -ne 'offline') { throw 'Replay response marker header missing.' }
 
             $css = Invoke-WebRequest 'http://127.0.0.1:7851/styles.css' -UseBasicParsing
             if ($css.Content -notmatch "images/logo.svg") { throw 'CSS offline replay failed.' }
