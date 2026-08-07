@@ -1,0 +1,45 @@
+name: TrueWebsiteCloner Offline Builder Gate
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  offline-builder:
+    name: Gate 0.4 / Offline Resource and Path Builder
+    runs-on: windows-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Setup .NET 10 SDK
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Build Windows application
+        shell: pwsh
+        run: ./scripts/Install-Dev.ps1
+
+      - name: Run Offline Builder Gate 0.4
+        shell: pwsh
+        env:
+          TWC_OFFLINE_GATE_OUTPUT: ${{ github.workspace }}\offline-gate-output
+        run: dotnet run --project ./tests/TrueWebsiteCloner.OfflineBuilderGateTests/TrueWebsiteCloner.OfflineBuilderGateTests.csproj -c Release
+
+      - name: Upload Gate 0.4 evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: truewebsitecloner-gate-0.4-${{ github.run_number }}
+          path: offline-gate-output/
+          if-no-files-found: warn
+          retention-days: 14
