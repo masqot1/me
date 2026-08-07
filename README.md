@@ -1,79 +1,47 @@
-# TrueWebsiteCloner — Foundation 0.1
+# TrueWebsiteCloner
 
-This is a clean restart of the project. No Network capture or cloning exists in this build yet.
+Current development stage: **v0.2 Network Capture Core**.
 
-## Gate 0.1 goal
+## Passed foundation
 
-Prove this chain on Windows before adding capture features:
+Gate 0.1 passed on GitHub Actions on Windows: build, Native Host registration, static checks, Test Lab startup and GET/POST API checks.
 
-`TrueWebsiteCloner.exe ↔ loopback bridge ↔ Native Messaging Host ↔ Chrome Extension ↔ Google Chrome`
+## v0.2 scope
 
-The extension has a pinned development ID:
+The Chrome extension can attach to an explicitly selected HTTP/HTTPS tab through `chrome.debugger`, enable the Network domain, and stream **metadata only** to the Windows application through Native Messaging.
 
-`ggcmdgdiopplpbcfinamhjdkbhiknfbk`
+Captured metadata includes URL, method, status, resource type, MIME type, protocol, timing, cache/service-worker flags, encoded length and loading success/failure metadata.
 
-## Requirements
+This stage intentionally does **not** save request bodies, response bodies, cookies, authorization headers, or arbitrary request/response headers.
+
+The Windows capture engine uses a whitelist, so unapproved fields such as `Authorization`, `Cookie`, `Set-Cookie` and `postData` are discarded even if they are accidentally supplied.
+
+## Development install
+
+Requirements:
 
 - Windows 10/11 x64
 - Google Chrome
 - .NET 10 SDK
 
-.NET 10 is used because it is the current LTS baseline for this clean implementation.
-
-## Install and test
-
-Open PowerShell in the project root:
+Run:
 
 ```powershell
 Set-ExecutionPolicy -Scope Process Bypass
 .\scripts\Install-Dev.ps1
 ```
 
-Then:
+Then load `chrome-extension` as an unpacked extension from `chrome://extensions`, run `artifacts\desktop\TrueWebsiteCloner.exe`, start the Test Lab, and use **Start + Reload** from the extension popup.
 
-1. Open `chrome://extensions`.
-2. Enable **Developer mode**.
-3. Choose **Load unpacked** and select `chrome-extension`.
-4. Run `artifacts\desktop\TrueWebsiteCloner.exe`.
-5. Open the extension popup.
-6. Click **Test Desktop Connection**.
-7. The popup must show `PASS` and the Desktop UI must show the extension as `CONNECTED`.
-8. Click **Run foundation check** in the Desktop app.
+## Automated gates
 
-Static checks can also be run with:
+- `.github/workflows/foundation-gate.yml` — Gate 0.1
+- `.github/workflows/network-capture-gate.yml` — Gate 0.2
 
-```powershell
-.\tests\Test-Foundation.ps1
-```
+Gate 0.2 creates a synthetic capture, checks JSONL and summary output, and verifies that sensitive/unapproved fields do not leak into the metadata log.
 
-## Test Lab
+See `docs/GATE-0.2.md` for the manual Chrome runtime check after CI passes.
 
-After `Install-Dev.ps1`, start the local test site from the Desktop UI or:
+## Next stage
 
-```powershell
-.\scripts\Run-TestLab.ps1
-```
-
-Then open:
-
-`http://127.0.0.1:7843`
-
-This test site is owned by the project and will be expanded as each capture feature is added.
-
-## Security decisions already in Foundation
-
-- Desktop bridge listens on `127.0.0.1` only.
-- A random 256-bit token is regenerated every Desktop run.
-- The Native Host manifest permits only the pinned extension ID.
-- Native Messaging messages are length-prefixed JSON, matching Chrome's protocol model.
-- No captured credentials, cookies, page data, or browsing content exists in Foundation 0.1.
-
-## Next gate
-
-Only after Gate 0.1 is PASS do we implement **0.2 Network Capture Core**:
-
-- attach/detach to an explicitly selected tab,
-- capture request/response metadata,
-- save to a chosen project workspace,
-- build a deterministic test case in Test Lab,
-- require a PASS report before 0.3 response-body capture.
+Only after Gate 0.2 passes do we implement **v0.3 Response Body Capture**.
