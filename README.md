@@ -1,6 +1,6 @@
 # TrueWebsiteCloner
 
-Current development stage: **v0.4 Offline Resource / Path Builder**.
+Current development stage: **v0.5 Local Runtime / Recorded GET Replay**.
 
 ## Passed gates
 
@@ -8,12 +8,13 @@ Current development stage: **v0.4 Offline Resource / Path Builder**.
 - Gate 0.2 — Network Metadata Capture Core: PASS
 - Gate 0.2B — Real Chrome + Extension + Native Host + Desktop: PASS
 - Gate 0.3 — Same-Origin Response Body Capture: PASS
+- Gate 0.4 — Offline Resource / Path Builder: PASS
 
-## v0.4 scope
+## v0.5 scope
 
-V0.4 converts captured response bodies into a deterministic local site tree under `offline/site/`. Captured HTML and CSS references are rewritten to relative local files, URL paths are mapped to stable filesystem paths, and uncaptured same-origin resources are reported separately.
+V0.5 serves a completed offline capture on loopback only. The local page can request recorded same-origin GET resources such as `/api/sample`, and the Local Runtime returns the captured file from disk. A replay miss is never proxied to the original site.
 
-JavaScript is intentionally not modified in this gate. Dynamic `fetch`, XHR and API behavior will be handled by the next API replay/runtime stage rather than unsafe blanket string replacement.
+Security policy: `127.0.0.1` only, GET/HEAD only, no cookies, no Authorization replay, no request bodies and no outbound HTTP proxy/client.
 
 ## Automated gates
 
@@ -22,9 +23,10 @@ JavaScript is intentionally not modified in this gate. Dynamic `fetch`, XHR and 
 - `.github/workflows/runtime-gate-0.2B.yml` — Gate 0.2B
 - `.github/workflows/response-body-gate.yml` — Gate 0.3
 - `.github/workflows/offline-builder-gate.yml` — Gate 0.4
+- `.github/workflows/local-runtime-gate.yml` — Gate 0.5
 
-See `docs/GATE-0.4.md` for the exact V0.4 PASS criteria.
+See `docs/GATE-0.5.md` for the exact replay policy and PASS criteria.
 
 ## Next stage
 
-After Gate 0.4 passes, the next stage is **API replay / local runtime**, so offline pages can reproduce captured same-origin API responses without contacting the original site.
+After Gate 0.5 passes, the next stage is offline verification: compare the local runtime against the deterministic Test Lab and report missing or behaviorally divergent resources.

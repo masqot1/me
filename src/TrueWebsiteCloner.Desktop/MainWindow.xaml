@@ -20,7 +20,7 @@
             </Grid.ColumnDefinitions>
             <StackPanel>
                 <TextBlock Text="TRUEWEBSITECLONER" FontSize="28" FontWeight="Bold" />
-                <TextBlock Text="Capture + offline builder · v0.4" Foreground="#8791A5" Margin="0,6,0,0" />
+                <TextBlock Text="Capture + Offline Builder + Local Runtime · v0.5" Foreground="#8791A5" Margin="0,6,0,0" />
             </StackPanel>
             <Border Grid.Column="1" Background="#151922" BorderBrush="#2B3140" BorderThickness="1" CornerRadius="8" Padding="14,8">
                 <TextBlock x:Name="FoundationStatusText" Text="FOUNDATION" FontWeight="SemiBold" Foreground="#9FB5FF" />
@@ -89,6 +89,7 @@
                     <Button Content="Start Test Lab" Click="StartTestLabButton_Click" />
                     <Button Content="Open Test Lab" Click="OpenTestLabButton_Click" />
                     <Button Content="Build Offline Site" Click="BuildOfflineSiteButton_Click" />
+                    <Button Content="Start Offline Runtime" Click="StartOfflineRuntimeButton_Click" />
                     <Button Content="Run foundation check" Click="RunFoundationCheckButton_Click" />
                 </WrapPanel>
                 <Border Grid.Row="3" Background="#101218" CornerRadius="8" Padding="14" Margin="0,14,0,0">
@@ -100,6 +101,6 @@
         </Border>
 
         <TextBlock Grid.Row="5" Margin="0,16,0,0" Foreground="#667084"
-                   Text="V0.4 builds a deterministic local resource tree from the latest completed capture. Dynamic API replay is the next gate." />
+                   Text="V0.5 Local Runtime: loopback only, recorded GET/HEAD only, replay misses never contact the original site." />
     </Grid>
 </Window>

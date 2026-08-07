@@ -1,0 +1,106 @@
+name: TrueWebsiteCloner Local Runtime Gate
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  local-runtime:
+    name: Gate 0.5 / Recorded GET API Replay
+    runs-on: windows-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Setup .NET 10 SDK
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Build application and Local Runtime
+        shell: pwsh
+        run: ./scripts/Install-Dev.ps1
+
+      - name: Build deterministic offline fixture
+        shell: pwsh
+        env:
+          TWC_OFFLINE_GATE_OUTPUT: ${{ github.workspace }}\local-runtime-gate-output
+        run: dotnet run --project ./tests/TrueWebsiteCloner.OfflineBuilderGateTests/TrueWebsiteCloner.OfflineBuilderGateTests.csproj -c Release
+
+      - name: Verify Local Runtime has no outbound HTTP client
+        shell: pwsh
+        run: |
+          $source = Get-Content './src/TrueWebsiteCloner.LocalRuntime/Program.cs' -Raw
+          foreach ($forbidden in @('HttpClient','WebClient','WebRequest.Create','SocketsHttpHandler','HttpClientHandler')) {
+            if ($source -match [regex]::Escape($forbidden)) { throw "Outbound-network primitive found in Local Runtime: $forbidden" }
+          }
+          Write-Host 'PASS  Local Runtime contains no outbound HTTP client/proxy primitive'
+
+      - name: Run Local Runtime and replay recorded GET responses
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $capture = Join-Path $env:GITHUB_WORKSPACE 'local-runtime-gate-output'
+          $exe = Join-Path $env:GITHUB_WORKSPACE 'artifacts\local-runtime\TrueWebsiteCloner.LocalRuntime.exe'
+          $runtime = $null
+          try {
+            $runtime = Start-Process -FilePath $exe -ArgumentList @('--capture', $capture, '--port', '7851') -PassThru -WindowStyle Hidden
+            $health = $null
+            for ($i = 0; $i -lt 30; $i++) {
+              try { $health = Invoke-RestMethod 'http://127.0.0.1:7851/__twc/health' -TimeoutSec 2; if ($health.ok) { break } } catch { }
+              Start-Sleep -Milliseconds 500
+            }
+            if (-not $health.ok) { throw 'Local Runtime did not become ready.' }
+            if ($health.outboundProxy -ne $false) { throw 'Local Runtime outboundProxy policy is not false.' }
+            if ($health.cookiesReplayed -ne $false -or $health.authorizationReplayed -ne $false) { throw 'Sensitive replay policy mismatch.' }
+
+            $home = Invoke-WebRequest 'http://127.0.0.1:7851/' -UseBasicParsing
+            if ($home.StatusCode -ne 200 -or $home.Content -notmatch 'src="app.js"') { throw 'Offline index replay failed.' }
+            if ($home.Headers['X-TrueWebsiteCloner-Replay'] -ne 'offline') { throw 'Replay response marker header missing.' }
+
+            $css = Invoke-WebRequest 'http://127.0.0.1:7851/styles.css' -UseBasicParsing
+            if ($css.Content -notmatch "images/logo.svg") { throw 'CSS offline replay failed.' }
+
+            $js = Invoke-WebRequest 'http://127.0.0.1:7851/app.js' -UseBasicParsing
+            if ($js.Content -notmatch "fetch\('/api/sample'\)") { throw 'JavaScript offline replay failed.' }
+
+            $api = Invoke-RestMethod 'http://127.0.0.1:7851/api/sample' -TimeoutSec 5
+            if ($api.source -ne 'test-lab') { throw 'Recorded GET API replay returned unexpected content.' }
+
+            $missStatus = 0
+            try { Invoke-WebRequest 'http://127.0.0.1:7851/missing.html' -UseBasicParsing -ErrorAction Stop | Out-Null }
+            catch { $missStatus = [int]$_.Exception.Response.StatusCode }
+            if ($missStatus -ne 404) { throw "Expected replay miss 404, got $missStatus" }
+
+            $postStatus = 0
+            try { Invoke-WebRequest 'http://127.0.0.1:7851/api/sample' -Method Post -Body '{}' -ContentType 'application/json' -UseBasicParsing -ErrorAction Stop | Out-Null }
+            catch { $postStatus = [int]$_.Exception.Response.StatusCode }
+            if ($postStatus -ne 405) { throw "Expected POST replay rejection 405, got $postStatus" }
+
+            Write-Host 'PASS  Offline HTML/CSS/JS served from disk'
+            Write-Host 'PASS  Recorded GET /api/sample replayed locally'
+            Write-Host 'PASS  Unknown route returns 404 without proxying'
+            Write-Host 'PASS  POST rejected with 405'
+            Write-Host 'PASS  Cookie/Auth replay disabled'
+            Write-Host 'RESULT: GATE 0.5 PASS'
+          }
+          finally {
+            if ($runtime -and -not $runtime.HasExited) { Stop-Process -Id $runtime.Id -Force -ErrorAction SilentlyContinue }
+          }
+
+      - name: Upload Gate 0.5 evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: truewebsitecloner-gate-0.5-${{ github.run_number }}
+          path: local-runtime-gate-output/
+          if-no-files-found: warn
+          retention-days: 14

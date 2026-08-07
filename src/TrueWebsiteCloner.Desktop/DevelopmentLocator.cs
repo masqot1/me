@@ -19,6 +19,13 @@ public static class DevelopmentLocator
         return candidate is not null && File.Exists(candidate) ? candidate : null;
     }
 
+    public static string? FindLocalRuntimeExe()
+    {
+        var artifacts = FindArtifactsRoot();
+        var candidate = artifacts is null ? null : Path.Combine(artifacts, "local-runtime", "TrueWebsiteCloner.LocalRuntime.exe");
+        return candidate is not null && File.Exists(candidate) ? candidate : null;
+    }
+
     private static string? FindArtifactsRoot()
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);

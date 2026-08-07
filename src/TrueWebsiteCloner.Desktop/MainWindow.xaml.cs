@@ -15,6 +15,7 @@ public partial class MainWindow : Window
     private readonly DispatcherTimer _statusTimer = new() { Interval = TimeSpan.FromSeconds(1) };
     private string? _chromePath;
     private Process? _testLabProcess;
+    private Process? _localRuntimeProcess;
 
     public MainWindow()
     {
@@ -37,7 +38,7 @@ public partial class MainWindow : Window
         {
             await _bridge.StartAsync();
             Log($"Desktop bridge listening on 127.0.0.1:{_bridge.Port}");
-            Log("TrueWebsiteCloner v0.4: response capture + offline resource builder ready.");
+            Log("TrueWebsiteCloner v0.5: capture + offline builder + local replay runtime ready.");
         }
         catch (Exception ex) { Log("Bridge start failed: " + ex.Message); }
 
@@ -51,6 +52,7 @@ public partial class MainWindow : Window
     private async void MainWindow_Closing(object? sender, System.ComponentModel.CancelEventArgs e)
     {
         _statusTimer.Stop();
+        if (_localRuntimeProcess is { HasExited: false }) { try { _localRuntimeProcess.Kill(entireProcessTree: true); } catch { } }
         if (_testLabProcess is { HasExited: false }) { try { _testLabProcess.Kill(entireProcessTree: true); } catch { } }
         await _bridge.DisposeAsync();
     }
@@ -110,32 +112,62 @@ public partial class MainWindow : Window
 
     private async void BuildOfflineSiteButton_Click(object sender, RoutedEventArgs e)
     {
+        var capture = FindLatestCompletedCapture(ProjectFolderTextBox.Text);
+        if (capture is null) { Log("OFFLINE BUILD: no completed capture was found."); return; }
+        await BuildOfflineAsync(capture, openFolder: true);
+    }
+
+    private async void StartOfflineRuntimeButton_Click(object sender, RoutedEventArgs e)
+    {
         try
         {
             var capture = FindLatestCompletedCapture(ProjectFolderTextBox.Text);
-            if (capture is null)
+            if (capture is null) { Log("LOCAL RUNTIME: no completed capture was found."); return; }
+
+            var build = await BuildOfflineAsync(capture, openFolder: false);
+            if (!build) return;
+
+            var exe = DevelopmentLocator.FindLocalRuntimeExe();
+            if (exe is null) { Log("LOCAL RUNTIME: executable not found. Run Install-Dev.ps1 first."); return; }
+
+            if (_localRuntimeProcess is { HasExited: false })
             {
-                Log("OFFLINE BUILD: no completed V0.3 capture with _bodies/bodies.jsonl was found.");
-                return;
+                try { _localRuntimeProcess.Kill(entireProcessTree: true); } catch { }
+                _localRuntimeProcess = null;
             }
 
+            var startInfo = new ProcessStartInfo(exe) { UseShellExecute = false, CreateNoWindow = true };
+            startInfo.ArgumentList.Add("--capture");
+            startInfo.ArgumentList.Add(capture);
+            startInfo.ArgumentList.Add("--port");
+            startInfo.ArgumentList.Add("7850");
+            _localRuntimeProcess = Process.Start(startInfo);
+            if (_localRuntimeProcess is null) { Log("LOCAL RUNTIME: failed to start process."); return; }
+
+            Log("LOCAL RUNTIME: http://127.0.0.1:7850");
+            await Task.Delay(900);
+            if (_chromePath is not null)
+                Process.Start(new ProcessStartInfo(_chromePath, "http://127.0.0.1:7850/") { UseShellExecute = true });
+            else
+                Process.Start(new ProcessStartInfo("http://127.0.0.1:7850/") { UseShellExecute = true });
+        }
+        catch (Exception ex) { Log("LOCAL RUNTIME FAIL: " + ex.Message); }
+    }
+
+    private async Task<bool> BuildOfflineAsync(string capture, bool openFolder)
+    {
+        try
+        {
             Log("OFFLINE BUILD: " + capture);
             var result = await _offlineBuilder.BuildAsync(capture);
-            if (!result.Ok)
-            {
-                Log("OFFLINE BUILD FAIL: " + result.Message);
-                return;
-            }
-
+            if (!result.Ok) { Log("OFFLINE BUILD FAIL: " + result.Message); return false; }
             Log($"OFFLINE BUILD PASS: resources={result.ResourceCount}, rewritten={result.RewrittenReferences}, missing={result.MissingReferences}");
             Log("Offline output: " + result.OutputRoot);
-            if (result.OutputRoot is not null)
+            if (openFolder && result.OutputRoot is not null)
                 Process.Start(new ProcessStartInfo("explorer.exe", result.OutputRoot) { UseShellExecute = true });
+            return true;
         }
-        catch (Exception ex)
-        {
-            Log("OFFLINE BUILD FAIL: " + ex.Message);
-        }
+        catch (Exception ex) { Log("OFFLINE BUILD FAIL: " + ex.Message); return false; }
     }
 
     private static string? FindLatestCompletedCapture(string projectRoot)
