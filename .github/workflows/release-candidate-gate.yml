@@ -1,0 +1,42 @@
+name: TrueWebsiteCloner V1.0 Release Candidate Gate
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  release-candidate:
+    name: V1.0-RC1 / Master Gate
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+      - name: Setup .NET 10 SDK
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+      - name: Setup Node.js 24
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+      - name: Build TrueWebsiteCloner
+        shell: pwsh
+        run: ./scripts/Install-Dev.ps1
+      - name: Run V1.0-RC1 master verification
+        shell: pwsh
+        run: ./scripts/Verify-ReleaseCandidate.ps1 -OutputDirectory "${{ github.workspace }}\release-candidate-output"
+      - name: Upload V1.0-RC1 evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: truewebsitecloner-v1.0-rc1-${{ github.run_number }}
+          path: release-candidate-output/
+          if-no-files-found: warn
+          retention-days: 30
