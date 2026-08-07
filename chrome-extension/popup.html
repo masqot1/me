@@ -1,0 +1,24 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>TrueWebsiteCloner</title>
+  <style>
+    body{margin:0;width:330px;font:14px Segoe UI,system-ui,sans-serif;background:#0f1218;color:#eef2f8}.wrap{padding:18px}.brand{font-size:18px;font-weight:750}.sub{color:#8590a3;font-size:12px;margin-top:4px}.card{margin-top:16px;padding:14px;background:#171c25;border:1px solid #2b3443;border-radius:10px}.row{display:flex;justify-content:space-between;gap:12px;margin:7px 0}.label{color:#8c96a8}.value{font-family:Consolas,monospace;font-size:11px;max-width:180px;overflow:hidden;text-overflow:ellipsis}.status{margin:14px 0 0;padding:10px;border-radius:8px;background:#10141b;color:#abb5c5;min-height:38px;white-space:pre-wrap}button{width:100%;margin-top:14px;border:1px solid #44536c;background:#27364f;color:white;border-radius:9px;padding:10px;font-weight:650;cursor:pointer}button:disabled{opacity:.55;cursor:default}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="brand">TrueWebsiteCloner</div>
+    <div class="sub">Foundation bridge · v0.1</div>
+    <div class="card">
+      <div class="row"><span class="label">Extension</span><span id="extensionId" class="value"></span></div>
+      <div class="row"><span class="label">Native host</span><span>com.truewebsitecloner.host</span></div>
+      <button id="testButton">Test Desktop Connection</button>
+      <div id="status" class="status">Open TrueWebsiteCloner.exe, then run the connection test.</div>
+    </div>
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>

@@ -1,0 +1,36 @@
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TrueWebsiteCloner.Shared", "src\TrueWebsiteCloner.Shared\TrueWebsiteCloner.Shared.csproj", "{8D2C20A2-967A-4F1F-93FC-54B7EF969001}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TrueWebsiteCloner.Desktop", "src\TrueWebsiteCloner.Desktop\TrueWebsiteCloner.Desktop.csproj", "{8D2C20A2-967A-4F1F-93FC-54B7EF969002}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TrueWebsiteCloner.NativeHost", "src\TrueWebsiteCloner.NativeHost\TrueWebsiteCloner.NativeHost.csproj", "{8D2C20A2-967A-4F1F-93FC-54B7EF969003}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TrueWebsiteCloner.TestLab", "src\TrueWebsiteCloner.TestLab\TrueWebsiteCloner.TestLab.csproj", "{8D2C20A2-967A-4F1F-93FC-54B7EF969004}"
+EndProject
+Global
+    GlobalSection(SolutionConfigurationPlatforms) = preSolution
+        Debug|Any CPU = Debug|Any CPU
+        Release|Any CPU = Release|Any CPU
+    EndGlobalSection
+    GlobalSection(ProjectConfigurationPlatforms) = postSolution
+        {8D2C20A2-967A-4F1F-93FC-54B7EF969001}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+        {8D2C20A2-967A-4F1F-93FC-54B7EF969001}.Debug|Any CPU.Build.0 = Debug|Any CPU
+        {8D2C20A2-967A-4F1F-93FC-54B7EF969001}.Release|Any CPU.ActiveCfg = Release|Any CPU
+        {8D2C20A2-967A-4F1F-93FC-54B7EF969001}.Release|Any CPU.Build.0 = Release|Any CPU
+        {8D2C20A2-967A-4F1F-93FC-54B7EF969002}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+        {8D2C20A2-967A-4F1F-93FC-54B7EF969002}.Debug|Any CPU.Build.0 = Debug|Any CPU
+        {8D2C20A2-967A-4F1F-93FC-54B7EF969002}.Release|Any CPU.ActiveCfg = Release|Any CPU
+        {8D2C20A2-967A-4F1F-93FC-54B7EF969002}.Release|Any CPU.Build.0 = Release|Any CPU
+        {8D2C20A2-967A-4F1F-93FC-54B7EF969003}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+        {8D2C20A2-967A-4F1F-93FC-54B7EF969003}.Debug|Any CPU.Build.0 = Debug|Any CPU
+        {8D2C20A2-967A-4F1F-93FC-54B7EF969003}.Release|Any CPU.ActiveCfg = Release|Any CPU
+        {8D2C20A2-967A-4F1F-93FC-54B7EF969003}.Release|Any CPU.Build.0 = Release|Any CPU
+        {8D2C20A2-967A-4F1F-93FC-54B7EF969004}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+        {8D2C20A2-967A-4F1F-93FC-54B7EF969004}.Debug|Any CPU.Build.0 = Debug|Any CPU
+        {8D2C20A2-967A-4F1F-93FC-54B7EF969004}.Release|Any CPU.ActiveCfg = Release|Any CPU
+        {8D2C20A2-967A-4F1F-93FC-54B7EF969004}.Release|Any CPU.Build.0 = Release|Any CPU
+    EndGlobalSection
+EndGlobal

@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <AssemblyName>TrueWebsiteCloner</AssemblyName>
+    <RootNamespace>TrueWebsiteCloner.Desktop</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\TrueWebsiteCloner.Shared\TrueWebsiteCloner.Shared.csproj" />
+  </ItemGroup>
+</Project>

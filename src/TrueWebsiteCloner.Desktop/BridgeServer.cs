@@ -1,0 +1,125 @@
+using System.Net;
+using System.Net.Sockets;
+using System.Security.Cryptography;
+using System.Text.Json;
+using TrueWebsiteCloner.Shared;
+
+namespace TrueWebsiteCloner.Desktop;
+
+public sealed class BridgeServer : IAsyncDisposable
+{
+    private readonly TcpListener _listener = new(IPAddress.Loopback, 0);
+    private readonly CancellationTokenSource _cts = new();
+    private Task? _acceptLoop;
+    private string _token = string.Empty;
+
+    public int Port { get; private set; }
+    public DateTimeOffset? LastExtensionMessageAtUtc { get; private set; }
+    public string LastMessageSummary { get; private set; } = "—";
+
+    public event EventHandler? StateChanged;
+
+    public async Task StartAsync()
+    {
+        AppPaths.EnsureDirectories();
+        _token = Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
+        _listener.Start();
+        Port = ((IPEndPoint)_listener.LocalEndpoint).Port;
+
+        var info = new BridgeInfo(Port, _token, Environment.ProcessId, DateTimeOffset.UtcNow);
+        var json = JsonSerializer.Serialize(info, new JsonSerializerOptions(JsonSerializerDefaults.Web) { WriteIndented = true });
+        await File.WriteAllTextAsync(AppPaths.BridgeInfoPath, json);
+
+        _acceptLoop = AcceptLoopAsync(_cts.Token);
+        StateChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    private async Task AcceptLoopAsync(CancellationToken cancellationToken)
+    {
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            TcpClient? client = null;
+            try
+            {
+                client = await _listener.AcceptTcpClientAsync(cancellationToken);
+                _ = HandleClientAsync(client, cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                client?.Dispose();
+                break;
+            }
+            catch
+            {
+                client?.Dispose();
+            }
+        }
+    }
+
+    private async Task HandleClientAsync(TcpClient client, CancellationToken cancellationToken)
+    {
+        using (client)
+        {
+            try
+            {
+                await using var stream = client.GetStream();
+                using var doc = await FramedJson.ReadDocumentAsync(stream, ProtocolConstants.MaxBridgeMessageBytes, cancellationToken);
+                if (doc is null)
+                    return;
+
+                var envelope = doc.RootElement.Deserialize<NativeBridgeEnvelope>(new JsonSerializerOptions(JsonSerializerDefaults.Web));
+                if (envelope is null || !CryptographicOperations.FixedTimeEquals(
+                        System.Text.Encoding.UTF8.GetBytes(envelope.Token),
+                        System.Text.Encoding.UTF8.GetBytes(_token)))
+                {
+                    await FramedJson.WriteAsync(stream,
+                        new BridgeReply(false, "unauthorized", "Bridge token rejected.", "0.1.0", DateTimeOffset.UtcNow),
+                        ProtocolConstants.MaxBridgeMessageBytes, cancellationToken);
+                    return;
+                }
+
+                var type = envelope.Payload.TryGetProperty("type", out var typeValue)
+                    ? typeValue.GetString() ?? "unknown"
+                    : "unknown";
+
+                LastExtensionMessageAtUtc = DateTimeOffset.UtcNow;
+                LastMessageSummary = $"{type} from {envelope.Origin ?? "unknown origin"}";
+                StateChanged?.Invoke(this, EventArgs.Empty);
+
+                var reply = new BridgeReply(
+                    true,
+                    "desktop_bridge_ok",
+                    "Desktop bridge received the Chrome extension message.",
+                    "0.1.0",
+                    DateTimeOffset.UtcNow,
+                    new { desktopPid = Environment.ProcessId, bridgePort = Port, receivedType = type });
+
+                await FramedJson.WriteAsync(stream, reply, ProtocolConstants.MaxBridgeMessageBytes, cancellationToken);
+            }
+            catch
+            {
+                // Connection-level failures are intentionally isolated from the desktop process.
+            }
+        }
+    }
+
+    public bool WasExtensionSeenRecently(TimeSpan window) =>
+        LastExtensionMessageAtUtc is { } at && DateTimeOffset.UtcNow - at <= window;
+
+    public async ValueTask DisposeAsync()
+    {
+        _cts.Cancel();
+        _listener.Stop();
+        if (_acceptLoop is not null)
+        {
+            try { await _acceptLoop; } catch { }
+        }
+        try
+        {
+            if (File.Exists(AppPaths.BridgeInfoPath))
+                File.Delete(AppPaths.BridgeInfoPath);
+        }
+        catch { }
+        _cts.Dispose();
+    }
+}
