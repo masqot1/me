@@ -4,7 +4,7 @@ $Artifacts = Join-Path $Root "artifacts"
 $ExtensionId = "ggcmdgdiopplpbcfinamhjdkbhiknfbk"
 $HostName = "com.truewebsitecloner.host"
 
-Write-Host "TrueWebsiteCloner v0.7 - development install" -ForegroundColor Cyan
+Write-Host "TrueWebsiteCloner v0.8 - development install" -ForegroundColor Cyan
 
 $dotnet = Get-Command dotnet -ErrorAction SilentlyContinue
 if (-not $dotnet) { throw ".NET SDK was not found. Install .NET 10 SDK first." }
@@ -14,23 +14,20 @@ if (-not $version.StartsWith("10.")) { throw ".NET 10 SDK is required. Detected:
 if (Test-Path $Artifacts) { Remove-Item $Artifacts -Recurse -Force }
 New-Item -ItemType Directory -Path $Artifacts | Out-Null
 
-& dotnet publish (Join-Path $Root "src\TrueWebsiteCloner.NativeHost\TrueWebsiteCloner.NativeHost.csproj") -c Release -r win-x64 --self-contained false -o (Join-Path $Artifacts "native-host")
-if ($LASTEXITCODE -ne 0) { throw "Native Host publish failed." }
+$projects = @(
+  @{ Name = 'Native Host'; Project = 'src\TrueWebsiteCloner.NativeHost\TrueWebsiteCloner.NativeHost.csproj'; Output = 'native-host' },
+  @{ Name = 'Desktop'; Project = 'src\TrueWebsiteCloner.Desktop\TrueWebsiteCloner.Desktop.csproj'; Output = 'desktop' },
+  @{ Name = 'Test Lab'; Project = 'src\TrueWebsiteCloner.TestLab\TrueWebsiteCloner.TestLab.csproj'; Output = 'testlab' },
+  @{ Name = 'Local Runtime'; Project = 'src\TrueWebsiteCloner.LocalRuntime\TrueWebsiteCloner.LocalRuntime.csproj'; Output = 'local-runtime' },
+  @{ Name = 'Offline Tool'; Project = 'src\TrueWebsiteCloner.OfflineTool\TrueWebsiteCloner.OfflineTool.csproj'; Output = 'offline-tool' },
+  @{ Name = 'Recovery Tool'; Project = 'src\TrueWebsiteCloner.RecoveryTool\TrueWebsiteCloner.RecoveryTool.csproj'; Output = 'recovery-tool' },
+  @{ Name = 'Graph Tool'; Project = 'src\TrueWebsiteCloner.GraphTool\TrueWebsiteCloner.GraphTool.csproj'; Output = 'graph-tool' }
+)
 
-& dotnet publish (Join-Path $Root "src\TrueWebsiteCloner.Desktop\TrueWebsiteCloner.Desktop.csproj") -c Release -r win-x64 --self-contained false -o (Join-Path $Artifacts "desktop")
-if ($LASTEXITCODE -ne 0) { throw "Desktop publish failed." }
-
-& dotnet publish (Join-Path $Root "src\TrueWebsiteCloner.TestLab\TrueWebsiteCloner.TestLab.csproj") -c Release -r win-x64 --self-contained false -o (Join-Path $Artifacts "testlab")
-if ($LASTEXITCODE -ne 0) { throw "Test Lab publish failed." }
-
-& dotnet publish (Join-Path $Root "src\TrueWebsiteCloner.LocalRuntime\TrueWebsiteCloner.LocalRuntime.csproj") -c Release -r win-x64 --self-contained false -o (Join-Path $Artifacts "local-runtime")
-if ($LASTEXITCODE -ne 0) { throw "Local Runtime publish failed." }
-
-& dotnet publish (Join-Path $Root "src\TrueWebsiteCloner.OfflineTool\TrueWebsiteCloner.OfflineTool.csproj") -c Release -r win-x64 --self-contained false -o (Join-Path $Artifacts "offline-tool")
-if ($LASTEXITCODE -ne 0) { throw "Offline Tool publish failed." }
-
-& dotnet publish (Join-Path $Root "src\TrueWebsiteCloner.RecoveryTool\TrueWebsiteCloner.RecoveryTool.csproj") -c Release -r win-x64 --self-contained false -o (Join-Path $Artifacts "recovery-tool")
-if ($LASTEXITCODE -ne 0) { throw "Recovery Tool publish failed." }
+foreach ($item in $projects) {
+  & dotnet publish (Join-Path $Root $item.Project) -c Release -r win-x64 --self-contained false -o (Join-Path $Artifacts $item.Output)
+  if ($LASTEXITCODE -ne 0) { throw "$($item.Name) publish failed." }
+}
 
 $NativeDir = Join-Path $env:LOCALAPPDATA "TrueWebsiteCloner\native-host"
 New-Item -ItemType Directory -Path $NativeDir -Force | Out-Null

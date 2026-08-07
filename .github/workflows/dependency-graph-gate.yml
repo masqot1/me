@@ -1,0 +1,139 @@
+name: TrueWebsiteCloner Dependency Graph Gate
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  dependency-graph:
+    name: Gate 0.8 / Dependency Graph and Completeness
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Setup .NET 10 SDK
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Setup Node.js 24
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+
+      - name: Build TrueWebsiteCloner
+        shell: pwsh
+        run: ./scripts/Install-Dev.ps1
+
+      - name: Install Puppeteer and Chrome for Testing
+        shell: pwsh
+        run: |
+          Push-Location ./tests/runtime-gate-0.2B
+          try {
+            npm install --no-audit --no-fund
+            if ($LASTEXITCODE -ne 0) { throw "npm install failed with exit code $LASTEXITCODE" }
+          }
+          finally { Pop-Location }
+
+      - name: Capture, recover and build dependency graph
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $gateRoot = Join-Path $env:GITHUB_WORKSPACE 'dependency-graph-gate-output'
+          if (Test-Path $gateRoot) { Remove-Item $gateRoot -Recurse -Force }
+          New-Item -ItemType Directory -Path $gateRoot -Force | Out-Null
+          $env:TWC_PROJECT_ROOT = $gateRoot
+
+          $testLabExe = Join-Path $env:GITHUB_WORKSPACE 'artifacts\testlab\TrueWebsiteCloner.TestLab.exe'
+          $desktopExe = Join-Path $env:GITHUB_WORKSPACE 'artifacts\desktop\TrueWebsiteCloner.exe'
+          $offlineToolExe = Join-Path $env:GITHUB_WORKSPACE 'artifacts\offline-tool\TrueWebsiteCloner.OfflineTool.exe'
+          $recoveryToolExe = Join-Path $env:GITHUB_WORKSPACE 'artifacts\recovery-tool\TrueWebsiteCloner.RecoveryTool.exe'
+          $graphToolExe = Join-Path $env:GITHUB_WORKSPACE 'artifacts\graph-tool\TrueWebsiteCloner.GraphTool.exe'
+          $bridgeInfo = Join-Path $env:LOCALAPPDATA 'TrueWebsiteCloner\runtime\bridge-info.json'
+          $testLab = $null
+          $desktop = $null
+
+          try {
+            $testLab = Start-Process -FilePath $testLabExe -PassThru -WindowStyle Hidden
+            $ready = $false
+            for ($i = 0; $i -lt 30; $i++) {
+              try { if ((Invoke-RestMethod 'http://127.0.0.1:7843/health' -TimeoutSec 2).ok) { $ready = $true; break } } catch { }
+              Start-Sleep -Milliseconds 500
+            }
+            if (-not $ready) { throw 'Test Lab did not become ready.' }
+
+            $desktop = Start-Process -FilePath $desktopExe -PassThru
+            for ($i = 0; $i -lt 30 -and -not (Test-Path $bridgeInfo); $i++) { Start-Sleep -Milliseconds 500 }
+            if (-not (Test-Path $bridgeInfo)) { throw 'Desktop bridge did not become ready.' }
+
+            Push-Location (Join-Path $env:GITHUB_WORKSPACE 'tests\runtime-gate-0.2B')
+            try {
+              node ./run-v0.3.mjs
+              if ($LASTEXITCODE -ne 0) { throw "Real Chrome capture exited with $LASTEXITCODE" }
+            }
+            finally { Pop-Location }
+
+            $summary = Get-ChildItem $gateRoot -Filter summary.json -Recurse -File | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
+            if (-not $summary) { throw 'Capture summary.json was not found.' }
+            $captureRoot = Split-Path (Split-Path $summary.FullName -Parent) -Parent
+
+            & $offlineToolExe --capture $captureRoot
+            if ($LASTEXITCODE -ne 0) { throw 'Offline build failed.' }
+            & $recoveryToolExe --capture $captureRoot
+            if ($LASTEXITCODE -ne 0) { throw 'Recovery did not complete.' }
+            & $graphToolExe --capture $captureRoot
+            if ($LASTEXITCODE -ne 0) { throw 'Dependency graph is incomplete.' }
+
+            $reportPath = Join-Path $captureRoot 'offline\completeness-report.json'
+            $graphPath = Join-Path $captureRoot 'offline\dependency-graph.json'
+            $dotPath = Join-Path $captureRoot 'offline\dependency-graph.dot'
+            $report = Get-Content $reportPath -Raw | ConvertFrom-Json -Depth 50
+            $graph = Get-Content $graphPath -Raw | ConvertFrom-Json -Depth 50
+
+            if ($report.result -ne 'PASS') { throw 'Completeness report is not PASS.' }
+            if ([double]$report.completenessScore -ne 100) { throw "Raw completeness is $($report.completenessScore), expected 100." }
+            if ([double]$report.weightedCompletenessScore -ne 100) { throw "Weighted completeness is $($report.weightedCompletenessScore), expected 100." }
+            if ([int]$report.missingDependencies -ne 0) { throw 'Graph still has missing dependencies.' }
+            if ([int]$report.sameOriginDependencies -lt 4) { throw "Expected at least 4 same-origin dependencies, got $($report.sameOriginDependencies)." }
+            if ([int]$report.recoveredResources -lt 1) { throw 'Recovered resource is not represented in graph nodes.' }
+
+            $fetchEdge = @($graph.edges | Where-Object { $_.kind -eq 'js-fetch' -and $_.targetUrl -match '/api/sample' -and $_.resolved })
+            if ($fetchEdge.Count -lt 1) { throw 'JavaScript fetch dependency to /api/sample was not found.' }
+            $recoveryEdge = @($graph.edges | Where-Object { $_.kind -eq 'html-href' -and $_.targetUrl -match '/recover/help.html' -and $_.resolved })
+            if ($recoveryEdge.Count -lt 1) { throw 'Recovered HTML dependency was not found.' }
+            $styleEdge = @($graph.edges | Where-Object { $_.kind -eq 'html-href' -and $_.targetUrl -match '/styles.css' -and $_.resolved })
+            if ($styleEdge.Count -lt 1) { throw 'Stylesheet dependency was not found.' }
+            $scriptEdge = @($graph.edges | Where-Object { $_.kind -eq 'html-src' -and $_.targetUrl -match '/app.js' -and $_.resolved })
+            if ($scriptEdge.Count -lt 1) { throw 'Script dependency was not found.' }
+            if ((Get-Content $dotPath -Raw) -notmatch 'digraph TrueWebsiteCloner') { throw 'DOT graph output is invalid.' }
+
+            Write-Host 'PASS  HTML dependency edges'
+            Write-Host 'PASS  JavaScript fetch dependency edge'
+            Write-Host 'PASS  Recovered resource represented in graph'
+            Write-Host 'PASS  Raw completeness = 100%'
+            Write-Host 'PASS  Weighted completeness = 100%'
+            Write-Host 'PASS  Graph JSON + DOT outputs'
+            Write-Host 'RESULT: GATE 0.8 PASS'
+          }
+          finally {
+            if ($desktop -and -not $desktop.HasExited) { Stop-Process -Id $desktop.Id -Force -ErrorAction SilentlyContinue }
+            if ($testLab -and -not $testLab.HasExited) { Stop-Process -Id $testLab.Id -Force -ErrorAction SilentlyContinue }
+          }
+
+      - name: Upload Gate 0.8 evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: truewebsitecloner-gate-0.8-${{ github.run_number }}
+          path: dependency-graph-gate-output/
+          if-no-files-found: warn
+          retention-days: 14

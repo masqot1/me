@@ -1,31 +1,27 @@
 # TrueWebsiteCloner
 
-Current development stage: **v0.7 Capture Completeness / Missing Resource Recovery**.
+Current development stage: **v0.8 Dependency Graph / Completeness Score**.
 
 ## Passed gates
 
-- Gate 0.1 — Windows Foundation: PASS
-- Gate 0.2 — Network Metadata Capture Core: PASS
-- Gate 0.2B — Real Chrome + Extension + Native Host + Desktop: PASS
-- Gate 0.3 — Same-Origin Response Body Capture: PASS
-- Gate 0.4 — Offline Resource / Path Builder: PASS
-- Gate 0.5 — Loopback Local Runtime / Recorded GET Replay: PASS
-- Gate 0.6 — Offline Verification / Diff: PASS
+Gates 0.1 through 0.7 have passed on GitHub Actions, including real Chrome capture, response-body storage, offline building, local API replay, source-vs-replay verification, and deterministic missing-resource recovery inside Test Lab.
 
-## v0.7 scope
+## v0.8 scope
 
-V0.7 reads the missing-resource report created by the offline builder, performs a tightly controlled recovery pass against the project-owned loopback Test Lab, appends successfully recovered response bodies to the capture, and rebuilds the offline tree.
+V0.8 builds a dependency graph from captured HTML, CSS and simple literal JavaScript dependencies. Each resource becomes a node and each discovered relationship becomes an edge. Nodes identify captured, recovered, missing or external resources.
 
-The current recovery implementation is intentionally limited to loopback, same-origin GET requests. It sends no cookies or Authorization headers, follows no redirects, skips sensitive query parameter names, limits each pass to 16 items, and caps each recovered resource at 512 KiB.
+The project now emits both a raw completeness score and a weighted score. Documents, stylesheets, scripts and API dependencies have greater weight than decorative images, while the exact weights are written into the report so the score is auditable.
 
-The deterministic test case uses `/recover/help.html`: it is linked from the Test Lab document but is not requested during the initial page load. Gate 0.7 proves it is first reported missing, then recovered, rebuilt, replayed locally, and opened in real Chrome without any external HTTP traffic.
+Outputs:
 
-## Automated gates
+- `offline/dependency-graph.json`
+- `offline/dependency-graph.dot`
+- `offline/completeness-report.json`
 
-The repository now includes automated Gates 0.1 through 0.7 under `.github/workflows/`.
+Gate 0.8 requires a real Chrome Test Lab capture, V0.7 recovery, the expected HTML and JavaScript edges, zero missing same-origin dependencies, and 100% raw and weighted completeness.
 
-See `docs/GATE-0.7.md` for the recovery policy and PASS criteria.
+See `docs/GATE-0.8.md` for details.
 
 ## Next stage
 
-After Gate 0.7 passes, the next stage is a dependency graph and capture-completeness scoring layer so each offline project can explain exactly which captured resources depend on which others and why a project is or is not complete.
+After Gate 0.8 passes, the next stage is visual comparison: render source and offline pages in controlled Chrome sessions and measure visible layout/render differences with an explicit PASS threshold.
