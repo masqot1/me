@@ -1,18 +1,19 @@
 # TrueWebsiteCloner
 
-Current development stage: **v0.3 Same-Origin Response Body Capture**.
+Current development stage: **v0.4 Offline Resource / Path Builder**.
 
 ## Passed gates
 
 - Gate 0.1 — Windows Foundation: PASS
 - Gate 0.2 — Network Metadata Capture Core: PASS
 - Gate 0.2B — Real Chrome + Extension + Native Host + Desktop: PASS
+- Gate 0.3 — Same-Origin Response Body Capture: PASS
 
-## v0.3 scope
+## v0.4 scope
 
-V0.3 captures actual response bodies for the explicitly selected HTTP/HTTPS tab while keeping the scope deliberately constrained. Only same-origin `GET` responses are eligible, each decoded body is capped at 512 KiB, and request bodies, cookies and Authorization headers remain excluded.
+V0.4 converts captured response bodies into a deterministic local site tree under `offline/site/`. Captured HTML and CSS references are rewritten to relative local files, URL paths are mapped to stable filesystem paths, and uncaptured same-origin resources are reported separately.
 
-Captured body types include HTML, CSS, JavaScript, JSON, text, SVG and common web images. Body bytes are stored under `_bodies/`; `network.jsonl` contains body metadata and file paths but never the body content itself.
+JavaScript is intentionally not modified in this gate. Dynamic `fetch`, XHR and API behavior will be handled by the next API replay/runtime stage rather than unsafe blanket string replacement.
 
 ## Automated gates
 
@@ -20,11 +21,10 @@ Captured body types include HTML, CSS, JavaScript, JSON, text, SVG and common we
 - `.github/workflows/network-capture-gate.yml` — Gate 0.2
 - `.github/workflows/runtime-gate-0.2B.yml` — Gate 0.2B
 - `.github/workflows/response-body-gate.yml` — Gate 0.3
+- `.github/workflows/offline-builder-gate.yml` — Gate 0.4
 
-Gate 0.3 includes an engine test for text/base64 bodies, size and same-origin policy checks, plus a real Chrome/Puppeteer run that saves Test Lab HTML/CSS/JS/JSON and verifies the contents on disk.
-
-See `docs/GATE-0.3.md` for the exact policy and PASS criteria.
+See `docs/GATE-0.4.md` for the exact V0.4 PASS criteria.
 
 ## Next stage
 
-Only after Gate 0.3 passes do we begin the offline resource/path builder stage.
+After Gate 0.4 passes, the next stage is **API replay / local runtime**, so offline pages can reproduce captured same-origin API responses without contacting the original site.
