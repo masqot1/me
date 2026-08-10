@@ -12,7 +12,7 @@ jobs:
   standalone:
     name: V1.0 / Self-Contained Windows x64
     runs-on: windows-latest
-    timeout-minutes: 40
+    timeout-minutes: 45
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -29,6 +29,9 @@ jobs:
       - name: Verify standalone package A
         shell: pwsh
         run: ./scripts/Verify-StandaloneDistribution.ps1 -ZipPath "${{ github.workspace }}\standalone-a\TrueWebsiteCloner-1.0.0-win-x64-standalone.zip"
+      - name: Clean-install smoke test the actual ZIP
+        shell: pwsh
+        run: ./scripts/Test-StandaloneInstall.ps1 -ZipPath "${{ github.workspace }}\standalone-a\TrueWebsiteCloner-1.0.0-win-x64-standalone.zip"
       - name: Build standalone package B from identical binaries
         shell: pwsh
         run: ./scripts/Build-StandaloneDistribution.ps1 -StandaloneArtifacts "${{ github.workspace }}\standalone-artifacts" -OutputDirectory "${{ github.workspace }}\standalone-b"

@@ -10,7 +10,7 @@ static string? Option(string[] args, string name)
 static int Usage()
 {
     Console.Error.WriteLine("TrueWebsiteCloner.Cli 1.0.0");
-    Console.Error.WriteLine("Commands: offline-build, recover, graph, snapshot-create, snapshot-diff, portable-export, portable-verify, portable-import, readiness, seal-create, seal-verify, bundle-create, bundle-verify, bundle-import");
+    Console.Error.WriteLine("Commands: version, offline-build, recover, graph, snapshot-create, snapshot-diff, portable-export, portable-verify, portable-import, readiness, seal-create, seal-verify, bundle-create, bundle-verify, bundle-import");
     return 2;
 }
 
@@ -19,6 +19,9 @@ var command = args[0].ToLowerInvariant();
 
 switch (command)
 {
+    case "version":
+        Console.WriteLine("TrueWebsiteCloner.Cli 1.0.0");
+        return 0;
     case "offline-build":
     {
         var capture = Option(args, "--capture");
