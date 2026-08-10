@@ -3,8 +3,31 @@ const DEBUGGER_VERSION = '1.3';
 const MAX_BODY_BYTES = 512 * 1024;
 const MAX_WEBSOCKET_FRAME_BYTES = 64 * 1024;
 const MAX_REQUEST_PAYLOAD_BYTES = 64 * 1024;
+const MAX_SAFE_HEADER_COUNT = 16;
+const MAX_SAFE_HEADER_VALUE_BYTES = 2 * 1024;
+const MAX_SAFE_HEADER_TOTAL_BYTES = 8 * 1024;
 const REQUEST_PAYLOAD_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 const REQUEST_PAYLOAD_TYPES = new Set(['XHR', 'Fetch']);
+const SAFE_REQUEST_HEADER_NAMES = new Set([
+  'accept',
+  'accept-language',
+  'cache-control',
+  'content-type',
+  'if-modified-since',
+  'if-none-match',
+  'pragma'
+]);
+const SAFE_RESPONSE_HEADER_NAMES = new Set([
+  'accept-ranges',
+  'cache-control',
+  'content-encoding',
+  'content-language',
+  'content-length',
+  'content-type',
+  'etag',
+  'last-modified',
+  'vary'
+]);
 let nativePort = null;
 let activeCapture = null;
 let eventCount = 0;
@@ -94,6 +117,24 @@ function headerValue(headers, name) {
   return '';
 }
 
+function selectSafeHeaders(headers, allowlist) {
+  const selected = {};
+  let totalBytes = 0;
+  for (const [rawName, rawValue] of Object.entries(headers || {})) {
+    const name = String(rawName || '').trim().toLowerCase();
+    if (!allowlist.has(name) || Object.hasOwn(selected, name)) continue;
+    if (Object.keys(selected).length >= MAX_SAFE_HEADER_COUNT) break;
+    const value = String(rawValue ?? '').trim();
+    if (value.includes('\r') || value.includes('\n')) continue;
+    const valueBytes = textByteLength(value);
+    const entryBytes = textByteLength(name) + valueBytes;
+    if (valueBytes > MAX_SAFE_HEADER_VALUE_BYTES || totalBytes + entryBytes > MAX_SAFE_HEADER_TOTAL_BYTES) continue;
+    selected[name] = value;
+    totalBytes += entryBytes;
+  }
+  return selected;
+}
+
 function allowedRequestContentType(contentType) {
   const mime = normalizedMime(contentType);
   return mime === 'application/json' || mime === 'application/ld+json' || mime.endsWith('+json') || mime === 'application/x-www-form-urlencoded';
@@ -129,6 +170,44 @@ function textByteLength(value) {
 
 function frameByteLength(payloadData) {
   return textByteLength(payloadData);
+}
+
+function sendSafeRequestHeaders(tabId, params) {
+  if (!activeCapture) return;
+  const request = params.request || {};
+  const url = String(request.url || '');
+  if (!sameOrigin(activeCapture.url, url)) return;
+  const headers = selectSafeHeaders(request.headers, SAFE_REQUEST_HEADER_NAMES);
+  if (!Object.keys(headers).length) return;
+  sendCaptureEvent({
+    type: 'capture.request.headers',
+    tabId,
+    requestId: params.requestId,
+    url,
+    method: String(request.method || '').toUpperCase(),
+    resourceType: String(params.type || ''),
+    headers,
+    timestamp: params.timestamp
+  });
+}
+
+function sendSafeResponseHeaders(tabId, params) {
+  if (!activeCapture) return;
+  const response = params.response || {};
+  const url = String(response.url || '');
+  if (!sameOrigin(activeCapture.url, url)) return;
+  const headers = selectSafeHeaders(response.headers, SAFE_RESPONSE_HEADER_NAMES);
+  if (!Object.keys(headers).length) return;
+  sendCaptureEvent({
+    type: 'capture.response.headers',
+    tabId,
+    requestId: params.requestId,
+    url,
+    status: Number(response.status || 0),
+    resourceType: String(params.type || ''),
+    headers,
+    timestamp: params.timestamp
+  });
 }
 
 function sendRequestPayload(tabId, params) {
@@ -345,6 +424,7 @@ chrome.debugger.onEvent.addListener((source, method, params) => {
   if (method === 'Network.requestWillBeSent') {
     requestInfo.set(params.requestId, { method: params.request?.method || '', url: params.request?.url || '' });
     sendCaptureEvent({ type: 'capture.request', tabId, requestId: params.requestId, loaderId: params.loaderId, url: params.request?.url, method: params.request?.method, resourceType: params.type, documentUrl: params.documentURL, timestamp: params.timestamp, wallTime: params.wallTime });
+    sendSafeRequestHeaders(tabId, params);
     sendRequestPayload(tabId, params);
   } else if (method === 'Network.responseReceived') {
     const r = params.response || {};
@@ -358,6 +438,7 @@ chrome.debugger.onEvent.addListener((source, method, params) => {
     };
     responseInfo.set(params.requestId, info);
     sendCaptureEvent({ type: 'capture.response', tabId, requestId: params.requestId, url: r.url, status: r.status, statusText: r.statusText, mimeType: r.mimeType, resourceType: params.type, protocol: r.protocol, fromDiskCache: !!r.fromDiskCache, fromServiceWorker: !!r.fromServiceWorker, encodedDataLength: r.encodedDataLength, timing: r.timing, timestamp: params.timestamp });
+    sendSafeResponseHeaders(tabId, params);
   } else if (method === 'Network.loadingFinished') {
     sendCaptureEvent({ type: 'capture.finished', tabId, requestId: params.requestId, encodedDataLength: params.encodedDataLength, timestamp: params.timestamp });
     const task = captureResponseBody({ tabId }, params.requestId)
