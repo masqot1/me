@@ -1,0 +1,56 @@
+name: TrueWebsiteCloner V1.0 Standalone Distribution Gate
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  standalone:
+    name: V1.0 / Self-Contained Windows x64
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+      - name: Setup .NET 10 SDK
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+      - name: Publish self-contained single-file executables
+        shell: pwsh
+        run: ./scripts/Publish-Standalone.ps1 -OutputRoot "${{ github.workspace }}\standalone-artifacts"
+      - name: Build standalone package A
+        shell: pwsh
+        run: ./scripts/Build-StandaloneDistribution.ps1 -StandaloneArtifacts "${{ github.workspace }}\standalone-artifacts" -OutputDirectory "${{ github.workspace }}\standalone-a"
+      - name: Verify standalone package A
+        shell: pwsh
+        run: ./scripts/Verify-StandaloneDistribution.ps1 -ZipPath "${{ github.workspace }}\standalone-a\TrueWebsiteCloner-1.0.0-win-x64-standalone.zip"
+      - name: Build standalone package B from identical binaries
+        shell: pwsh
+        run: ./scripts/Build-StandaloneDistribution.ps1 -StandaloneArtifacts "${{ github.workspace }}\standalone-artifacts" -OutputDirectory "${{ github.workspace }}\standalone-b"
+      - name: Prove deterministic standalone ZIP bytes
+        shell: pwsh
+        run: |
+          $a='${{ github.workspace }}\standalone-a\TrueWebsiteCloner-1.0.0-win-x64-standalone.zip'
+          $b='${{ github.workspace }}\standalone-b\TrueWebsiteCloner-1.0.0-win-x64-standalone.zip'
+          $ha=(Get-FileHash $a -Algorithm SHA256).Hash.ToLowerInvariant();$hb=(Get-FileHash $b -Algorithm SHA256).Hash.ToLowerInvariant()
+          if($ha-ne$hb){throw "Standalone ZIP is not deterministic: $ha != $hb"}
+          Write-Host "PASS  deterministic standalone SHA-256 = $ha" -ForegroundColor Green
+      - name: Prepare standalone download
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path '${{ github.workspace }}\standalone-output' -Force|Out-Null
+          Copy-Item '${{ github.workspace }}\standalone-a\TrueWebsiteCloner-1.0.0-win-x64-standalone.zip' '${{ github.workspace }}\standalone-output\TrueWebsiteCloner-1.0.0-win-x64-standalone.zip'
+          Copy-Item '${{ github.workspace }}\standalone-a\TrueWebsiteCloner-1.0.0-win-x64-standalone.zip.sha256' '${{ github.workspace }}\standalone-output\TrueWebsiteCloner-1.0.0-win-x64-standalone.zip.sha256'
+      - name: Upload standalone V1.0 distribution
+        uses: actions/upload-artifact@v7
+        with:
+          name: TrueWebsiteCloner-1.0.0-win-x64-standalone
+          path: standalone-output/
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0
