@@ -35,6 +35,10 @@ Malformed JSON is rejected instead of being stored raw.
 
 The extension filters same-origin, resource type, method, content type and size before sending a capture event. Core independently re-validates origin, resource type, method, content type, byte length and payload format before writing any artifact.
 
+## CI bridge model
+
+Real-Chrome validation uses `TrueWebsiteCloner.BridgeHarness`, a headless executable that instantiates the production `BridgeServer` without depending on WPF `MainWindow.Loaded`. The native host therefore talks to the same bridge implementation used by Desktop, but CI does not depend on a graphical window becoming ready.
+
 ## Validation
 
 `TrueWebsiteCloner.RequestPayloadGateTests` verifies:
@@ -47,5 +51,11 @@ The extension filters same-origin, resource type, method, content type and size 
 - malformed JSON, oversize and declared-length rejection;
 - exclusion of raw request payloads and injected authentication/header values from `network.jsonl`;
 - request manifest and summary accounting.
+
+The GitHub Actions Gate also runs a real Chrome capture against Test Lab and proves the complete path:
+
+`Chrome CDP → extension → native host → BridgeServer → CaptureSessionManager → _requests/`
+
+The runtime fixture submits a JSON POST containing password/token sentinels. The gate requires the request payload to be persisted, the sentinels to be absent from the capture, and `[REDACTED]` values to be present before it passes.
 
 GitHub Actions workflow: `.github/workflows/request-payload-gate.yml`.
