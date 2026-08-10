@@ -15,15 +15,21 @@ async function runSampleApi() {
   }
 }
 
+function runtimeSentinel(...parts) {
+  return parts.join('-');
+}
+
 async function runRequestPayloadGate() {
   const endpoint = '/' + ['api', 'echo'].join('/');
+  const authHeaderSentinel = runtimeSentinel('RUNTIME', 'AUTH', 'HEADER', 'MUST', 'NOT', 'PERSIST');
+  const apiKeyHeaderSentinel = runtimeSentinel('RUNTIME', 'APIKEY', 'HEADER', 'MUST', 'NOT', 'PERSIST');
   const response = await fetch(endpoint, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       'Cache-Control': 'no-cache',
-      'Authorization': 'Bearer RUNTIME-AUTH-HEADER-MUST-NOT-PERSIST',
-      'X-API-Key': 'RUNTIME-APIKEY-HEADER-MUST-NOT-PERSIST'
+      'Authorization': `Bearer ${authHeaderSentinel}`,
+      'X-API-Key': apiKeyHeaderSentinel
     },
     body: JSON.stringify({
       gate: '1.2',
