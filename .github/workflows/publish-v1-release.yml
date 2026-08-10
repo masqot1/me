@@ -29,7 +29,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release view v1.0.0 --repo $env:GITHUB_REPOSITORY *> $null
-          if ($LASTEXITCODE -eq 0) { throw 'GitHub Release v1.0.0 already exists; refusing to overwrite it.' }
+          $releaseExists = ($LASTEXITCODE -eq 0)
+          if ($releaseExists) { throw 'GitHub Release v1.0.0 already exists; refusing to overwrite it.' }
+          $global:LASTEXITCODE = 0
           Write-Host 'PASS  v1.0.0 does not exist yet'
 
       - name: Publish framework-dependent binaries
