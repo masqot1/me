@@ -142,6 +142,7 @@ try
 
     using var summary = JsonDocument.Parse(await File.ReadAllTextAsync(summaryPath));
     Require(summary.RootElement.GetProperty("webSocketEventCount").GetInt32() == 5, "Unexpected WebSocket event count.");
+    Require(summary.RootElement.GetProperty("webSocketFrameCount").GetInt32() == 2, "Rejected WebSocket frames must not be counted.");
     Require(summary.RootElement.GetProperty("webSocketFrameBytes").GetInt64() == payloadBytes, "Unexpected captured WebSocket frame byte count.");
     Require(summary.RootElement.GetProperty("maxWebSocketFrameBytes").GetInt32() == CaptureSessionManager.MaxWebSocketFrameBytes, "WebSocket frame limit missing from summary.");
 
