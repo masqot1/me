@@ -236,7 +236,6 @@ public sealed class CaptureSessionManager
         var frameBytes = 0;
         if (isFrame)
         {
-            session.WebSocketFrameCount++;
             var payloadCaptured = GetBool(payload, "payloadCaptured");
             if (!payloadCaptured)
             {
@@ -264,7 +263,11 @@ public sealed class CaptureSessionManager
             await File.AppendAllTextAsync(session.NetworkLog, line + Environment.NewLine, cancellationToken);
             session.EventCount++;
             session.WebSocketEventCount++;
-            if (isFrame && frameBytes > 0) session.WebSocketFrameBytes += frameBytes;
+            if (isFrame)
+            {
+                session.WebSocketFrameCount++;
+                if (frameBytes > 0) session.WebSocketFrameBytes += frameBytes;
+            }
             return new(true, "WebSocket event saved.", session.Root, session.EventCount);
         }
         finally
