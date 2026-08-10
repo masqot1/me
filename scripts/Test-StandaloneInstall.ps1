@@ -7,6 +7,7 @@ $Workspace=Join-Path $Temp 'workspace'
 $BridgeInfo=Join-Path $env:LOCALAPPDATA 'TrueWebsiteCloner\runtime\bridge-info.json'
 $RegPath='HKCU:\Software\Google\Chrome\NativeMessagingHosts\com.truewebsitecloner.host'
 $Desktop=$null
+$nativeProcess=$null
 $oldPath=$env:PATH;$oldRoot=$env:DOTNET_ROOT;$oldRootX64=$env:DOTNET_ROOT_X64;$oldProject=$env:TWC_PROJECT_ROOT
 try{
   New-Item -ItemType Directory -Path $Temp,$Workspace -Force|Out-Null
@@ -39,12 +40,12 @@ try{
   # Direct Native Messaging framing test against the running Desktop bridge.
   $hostExe=Join-Path $Root 'bin\native-host\TrueWebsiteCloner.NativeHost.exe'
   $hostPsi=[Diagnostics.ProcessStartInfo]::new();$hostPsi.FileName=$hostExe;$hostPsi.ArgumentList.Add('chrome-extension://ggcmdgdiopplpbcfinamhjdkbhiknfbk/');$hostPsi.UseShellExecute=$false;$hostPsi.RedirectStandardInput=$true;$hostPsi.RedirectStandardOutput=$true;$hostPsi.RedirectStandardError=$true
-  $host=[Diagnostics.Process]::Start($hostPsi)
+  $nativeProcess=[Diagnostics.Process]::Start($hostPsi)
   $json='{"type":"foundation.ping","data":{"extensionId":"ggcmdgdiopplpbcfinamhjdkbhiknfbk","version":"1.0.0"}}';$body=[Text.Encoding]::UTF8.GetBytes($json);$header=[BitConverter]::GetBytes([int]$body.Length)
-  $host.StandardInput.BaseStream.Write($header,0,4);$host.StandardInput.BaseStream.Write($body,0,$body.Length);$host.StandardInput.BaseStream.Flush()
-  $replyHeader=New-Object byte[] 4;$read=$host.StandardOutput.BaseStream.Read($replyHeader,0,4);if($read-ne 4){throw 'Native Host did not return a framed reply.'};$replyLength=[BitConverter]::ToInt32($replyHeader,0);if($replyLength-le 0-or$replyLength-gt 1048576){throw 'Native Host reply length is invalid.'};$replyBody=New-Object byte[] $replyLength;$offset=0;while($offset-lt$replyLength){$n=$host.StandardOutput.BaseStream.Read($replyBody,$offset,$replyLength-$offset);if($n-le 0){throw 'Native Host reply ended early.'};$offset+=$n};$host.StandardInput.Close();$replyText=[Text.Encoding]::UTF8.GetString($replyBody);$reply=$replyText|ConvertFrom-Json
+  $nativeProcess.StandardInput.BaseStream.Write($header,0,4);$nativeProcess.StandardInput.BaseStream.Write($body,0,$body.Length);$nativeProcess.StandardInput.BaseStream.Flush()
+  $replyHeader=New-Object byte[] 4;$read=$nativeProcess.StandardOutput.BaseStream.Read($replyHeader,0,4);if($read-ne 4){throw 'Native Host did not return a framed reply.'};$replyLength=[BitConverter]::ToInt32($replyHeader,0);if($replyLength-le 0-or$replyLength-gt 1048576){throw 'Native Host reply length is invalid.'};$replyBody=New-Object byte[] $replyLength;$offset=0;while($offset-lt$replyLength){$n=$nativeProcess.StandardOutput.BaseStream.Read($replyBody,$offset,$replyLength-$offset);if($n-le 0){throw 'Native Host reply ended early.'};$offset+=$n};$nativeProcess.StandardInput.Close();$replyText=[Text.Encoding]::UTF8.GetString($replyBody);$reply=$replyText|ConvertFrom-Json
   if(-not$reply.ok){throw "Native Host/Desktop bridge returned failure: $replyText"}
-  $host.WaitForExit(5000)|Out-Null;if(-not$host.HasExited){$host.Kill()}
+  $nativeProcess.WaitForExit(5000)|Out-Null;if(-not$nativeProcess.HasExited){$nativeProcess.Kill()}
 
   $env:PATH=$oldPath;$env:DOTNET_ROOT=$oldRoot;$env:DOTNET_ROOT_X64=$oldRootX64
   & (Join-Path $Root 'Uninstall-TrueWebsiteCloner.ps1')
@@ -57,6 +58,7 @@ try{
   Write-Host 'RESULT: V1.0 STANDALONE CLEAN INSTALL PASS' -ForegroundColor Green
 }
 finally{
+  if($nativeProcess-and-not$nativeProcess.HasExited){try{$nativeProcess.Kill()}catch{}}
   if($Desktop-and-not$Desktop.HasExited){try{$Desktop.Kill($true)}catch{}}
   $env:PATH=$oldPath;$env:DOTNET_ROOT=$oldRoot;$env:DOTNET_ROOT_X64=$oldRootX64;$env:TWC_PROJECT_ROOT=$oldProject
   try{if(Test-Path $RegPath){Remove-Item $RegPath -Recurse -Force}}catch{}
