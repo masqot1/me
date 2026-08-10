@@ -1,0 +1,3 @@
+using TrueWebsiteCloner.Core;
+static string? Opt(string[] a,string n){for(var i=0;i<a.Length-1;i++)if(string.Equals(a[i],n,StringComparison.OrdinalIgnoreCase))return a[i+1];return null;}
+if(args.Length==0)return 2;var project=Opt(args,"--project");if(string.IsNullOrWhiteSpace(project))return 2;var s=new ReleaseSealService();var r=args[0].Equals("create",StringComparison.OrdinalIgnoreCase)?await s.CreateAsync(project):args[0].Equals("verify",StringComparison.OrdinalIgnoreCase)?await s.VerifyAsync(project):new ReleaseSealResult(false,"Unknown command.");Console.WriteLine(r.Message);Console.WriteLine("Seal: "+r.SealPath);Console.WriteLine("Seal SHA-256: "+r.SealPayloadSha256);Console.WriteLine("Payload root SHA-256: "+r.PayloadContentRootSha256);return r.Ok?0:1;

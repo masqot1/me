@@ -1,0 +1,3 @@
+using TrueWebsiteCloner.Core;
+static string? Opt(string[] a,string n){for(var i=0;i<a.Length-1;i++)if(string.Equals(a[i],n,StringComparison.OrdinalIgnoreCase))return a[i+1];return null;}
+var project=Opt(args,"--project");if(string.IsNullOrWhiteSpace(project))return 2;var r=await new ReleaseReadinessService().ValidateAsync(project);Console.WriteLine($"Result: {r.Result}");Console.WriteLine($"Fingerprint: {r.ReleaseFingerprintSha256}");Console.WriteLine($"PASS={r.PassCount} FAIL={r.FailCount} N/A={r.NotApplicableCount}");Console.WriteLine("Next: "+r.NextAction);Console.WriteLine("Report: "+r.ReportPath);return r.Result=="READY"?0:1;
