@@ -10,6 +10,7 @@ on:
       - 'src/TrueWebsiteCloner.Core/**'
       - 'src/TrueWebsiteCloner.TestLab/**'
       - 'tests/TrueWebsiteCloner.RequestPayloadGateTests/**'
+      - 'tests/TrueWebsiteCloner.BridgeHarness/**'
       - 'tests/runtime-gate-0.2B/**'
       - '.github/workflows/request-payload-gate.yml'
   pull_request:
@@ -18,6 +19,7 @@ on:
       - 'src/TrueWebsiteCloner.Core/**'
       - 'src/TrueWebsiteCloner.TestLab/**'
       - 'tests/TrueWebsiteCloner.RequestPayloadGateTests/**'
+      - 'tests/TrueWebsiteCloner.BridgeHarness/**'
       - 'tests/runtime-gate-0.2B/**'
       - '.github/workflows/request-payload-gate.yml'
   workflow_dispatch:
@@ -55,6 +57,12 @@ jobs:
         shell: pwsh
         run: ./scripts/Install-Dev.ps1
 
+      - name: Build headless bridge harness
+        shell: pwsh
+        run: |
+          dotnet publish tests/TrueWebsiteCloner.BridgeHarness/TrueWebsiteCloner.BridgeHarness.csproj -c Release -r win-x64 --self-contained false -o artifacts/bridge-harness
+          if ($LASTEXITCODE -ne 0) { throw "Bridge harness publish failed with exit code $LASTEXITCODE" }
+
       - name: Install Puppeteer and Chrome for Testing
         shell: pwsh
         run: |
@@ -75,10 +83,10 @@ jobs:
           $env:TWC_PROJECT_ROOT = $gateRoot
 
           $testLabExe = Join-Path $env:GITHUB_WORKSPACE 'artifacts\testlab\TrueWebsiteCloner.TestLab.exe'
-          $desktopExe = Join-Path $env:GITHUB_WORKSPACE 'artifacts\desktop\TrueWebsiteCloner.exe'
+          $bridgeHarnessExe = Join-Path $env:GITHUB_WORKSPACE 'artifacts\bridge-harness\TrueWebsiteCloner.BridgeHarness.exe'
           $bridgeInfo = Join-Path $env:LOCALAPPDATA 'TrueWebsiteCloner\runtime\bridge-info.json'
           $testLab = $null
-          $desktop = $null
+          $bridgeHarness = $null
 
           try {
             if (Test-Path $bridgeInfo) { Remove-Item $bridgeInfo -Force -ErrorAction SilentlyContinue }
@@ -92,12 +100,16 @@ jobs:
             }
             if (-not $ready) { throw 'Test Lab did not become ready.' }
 
-            $desktop = Start-Process -FilePath $desktopExe -PassThru
-            for ($i = 0; $i -lt 60 -and -not (Test-Path $bridgeInfo); $i++) {
-              if ($desktop.HasExited) { throw "Desktop exited early with code $($desktop.ExitCode)." }
-              Start-Sleep -Milliseconds 500
+            $bridgeHarness = Start-Process -FilePath $bridgeHarnessExe -PassThru -WindowStyle Hidden
+            for ($i = 0; $i -lt 40 -and -not (Test-Path $bridgeInfo); $i++) {
+              if ($bridgeHarness.HasExited) { throw "Headless bridge harness exited early with code $($bridgeHarness.ExitCode)." }
+              Start-Sleep -Milliseconds 250
             }
-            if (-not (Test-Path $bridgeInfo)) { throw 'Desktop bridge did not become ready.' }
+            if (-not (Test-Path $bridgeInfo)) { throw 'Headless bridge harness did not become ready.' }
+
+            $bridge = Get-Content $bridgeInfo -Raw | ConvertFrom-Json
+            if ([int]$bridge.port -le 0) { throw 'Headless bridge harness published an invalid port.' }
+            Write-Host "PASS  Headless BridgeServer ready on port $($bridge.port)"
 
             Push-Location (Join-Path $env:GITHUB_WORKSPACE 'tests\runtime-gate-0.2B')
             try {
@@ -136,13 +148,13 @@ jobs:
             if ([int]$summary.requestPayloadRedactedFieldCount -lt 2) { throw "Real Chrome redaction count too low: $($summary.requestPayloadRedactedFieldCount)" }
 
             Write-Host "PASS  Real Chrome persisted $($summary.requestPayloadCount) request payload(s)"
-            Write-Host 'PASS  CDP requestWillBeSent postData reached Core'
+            Write-Host 'PASS  CDP requestWillBeSent postData reached Core through Native Messaging'
             Write-Host 'PASS  Real Chrome password/token values redacted before persistence'
             Write-Host 'PASS  Raw request secrets excluded from manifest and network.jsonl'
             Write-Host 'RESULT: REAL CHROME REQUEST PAYLOAD GATE 1.2 PASS'
           }
           finally {
-            if ($desktop -and -not $desktop.HasExited) { Stop-Process -Id $desktop.Id -Force -ErrorAction SilentlyContinue }
+            if ($bridgeHarness -and -not $bridgeHarness.HasExited) { Stop-Process -Id $bridgeHarness.Id -Force -ErrorAction SilentlyContinue }
             if ($testLab -and -not $testLab.HasExited) { Stop-Process -Id $testLab.Id -Force -ErrorAction SilentlyContinue }
           }
 
