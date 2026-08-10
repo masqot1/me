@@ -134,7 +134,23 @@ try
     Require(networkText.Contains("capture.websocket.created", StringComparison.Ordinal), "WebSocket creation event is missing.");
     Require(networkText.Contains("capture.websocket.handshake", StringComparison.Ordinal), "WebSocket handshake event is missing.");
     Require(networkText.Contains("capture.websocket.frame", StringComparison.Ordinal), "WebSocket frame event is missing.");
-    Require(networkText.Contains(payload, StringComparison.Ordinal), "Captured WebSocket payload is missing.");
+
+    var payloadPersisted = false;
+    foreach (var line in await File.ReadAllLinesAsync(networkLog))
+    {
+        if (string.IsNullOrWhiteSpace(line)) continue;
+        using var entry = JsonDocument.Parse(line);
+        var root = entry.RootElement;
+        if (!root.TryGetProperty("eventType", out var eventType) || eventType.GetString() != "capture.websocket.frame") continue;
+        if (!root.TryGetProperty("data", out var data)) continue;
+        if (data.TryGetProperty("payloadData", out var payloadValue) && payloadValue.GetString() == payload)
+        {
+            payloadPersisted = true;
+            break;
+        }
+    }
+    Require(payloadPersisted, "Captured WebSocket payload is missing.");
+
     Require(!networkText.Contains("must-not-persist", StringComparison.Ordinal), "Uncaptured oversized payload leaked into network.jsonl.");
     Require(!networkText.Contains("session=secret", StringComparison.Ordinal), "Cookie-like handshake data leaked into network.jsonl.");
     Require(!networkText.Contains("Bearer should-not-persist", StringComparison.Ordinal), "Authorization-like handshake data leaked into network.jsonl.");
