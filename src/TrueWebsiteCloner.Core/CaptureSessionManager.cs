@@ -9,6 +9,7 @@ public sealed record CaptureResult(bool Ok, string Message, string? SessionPath 
 public sealed class CaptureSessionManager
 {
     public const int MaxBodyBytes = 512 * 1024;
+    public const int MaxWebSocketFrameBytes = 64 * 1024;
 
     private sealed class Session
     {
@@ -22,6 +23,9 @@ public sealed class CaptureSessionManager
         public int EventCount;
         public int BodyCount;
         public long BodyBytes;
+        public int WebSocketEventCount;
+        public int WebSocketFrameCount;
+        public long WebSocketFrameBytes;
         public SemaphoreSlim WriteLock { get; } = new(1, 1);
     }
 
@@ -33,6 +37,11 @@ public sealed class CaptureSessionManager
         ["capture.finished"] = ["tabId", "requestId", "encodedDataLength", "timestamp"],
         ["capture.failed"] = ["tabId", "requestId", "errorText", "canceled", "blockedReason", "resourceType", "timestamp"],
         ["capture.body"] = ["tabId", "requestId", "url", "mimeType", "resourceType", "status", "base64Encoded", "byteLength"],
+        ["capture.websocket.created"] = ["tabId", "requestId", "url", "initiatorType"],
+        ["capture.websocket.handshake"] = ["tabId", "requestId", "url", "status", "statusText", "timestamp"],
+        ["capture.websocket.frame"] = ["tabId", "requestId", "url", "direction", "opcode", "mask", "payloadCaptured", "byteLength", "payloadData", "reason", "timestamp"],
+        ["capture.websocket.error"] = ["tabId", "requestId", "url", "errorMessage", "timestamp"],
+        ["capture.websocket.closed"] = ["tabId", "requestId", "url", "timestamp"],
         ["capture.stop"] = ["tabId", "reason", "stoppedAt"]
     };
 
@@ -66,6 +75,7 @@ public sealed class CaptureSessionManager
 
         if (!_sessions.TryGetValue(tabId, out var session)) return new(false, $"No active capture for tab {tabId}.");
         if (type == "capture.body") return await SaveBodyAsync(session, payload, cancellationToken);
+        if (type.StartsWith("capture.websocket.", StringComparison.Ordinal)) return await SaveWebSocketEventAsync(session, type, payload, cancellationToken);
 
         await AppendMetadataAsync(session, type, payload, cancellationToken);
         return new(true, "Metadata event saved.", session.Root, session.EventCount);
@@ -101,8 +111,8 @@ public sealed class CaptureSessionManager
 
         var sessionInfo = new
         {
-            version = "0.3.0",
-            mode = "same-origin-response-bodies",
+            version = "0.4.0-dev",
+            mode = "same-origin-response-bodies+same-origin-websocket-frames",
             tabId,
             targetUrl,
             targetOrigin = targetOrigin.GetLeftPart(UriPartial.Authority),
@@ -114,6 +124,14 @@ public sealed class CaptureSessionManager
                 getRequestsOnly = true,
                 maxBodyBytes = MaxBodyBytes,
                 requestBodiesSaved = false,
+                cookiesSaved = false,
+                authorizationHeadersSaved = false
+            },
+            webSocketPolicy = new
+            {
+                sameOriginOnly = true,
+                maxFrameBytes = MaxWebSocketFrameBytes,
+                handshakeHeadersSaved = false,
                 cookiesSaved = false,
                 authorizationHeadersSaved = false
             }
@@ -203,12 +221,67 @@ public sealed class CaptureSessionManager
         }
     }
 
+    private async Task<CaptureResult> SaveWebSocketEventAsync(Session session, string type, JsonElement payload, CancellationToken cancellationToken)
+    {
+        var requestId = GetString(payload, "requestId");
+        var url = GetString(payload, "url");
+        if (string.IsNullOrWhiteSpace(requestId) || string.IsNullOrWhiteSpace(url))
+            return new(false, "WebSocket event is incomplete.", session.Root, session.EventCount);
+
+        if (!IsSameWebSocketOrigin(session.TargetOrigin, url))
+            return new(false, "Cross-origin WebSocket event rejected by Gate 1.1 policy.", session.Root, session.EventCount);
+
+        var sanitized = Sanitize(type, payload);
+        var isFrame = type == "capture.websocket.frame";
+        var frameBytes = 0;
+        if (isFrame)
+        {
+            var payloadCaptured = GetBool(payload, "payloadCaptured");
+            if (!payloadCaptured)
+            {
+                sanitized.Remove("payloadData");
+            }
+            else
+            {
+                var payloadData = GetString(payload, "payloadData");
+                if (payloadData is null)
+                    return new(false, "Captured WebSocket frame is missing payloadData.", session.Root, session.EventCount);
+
+                frameBytes = Encoding.UTF8.GetByteCount(payloadData);
+                if (frameBytes > MaxWebSocketFrameBytes)
+                    return new(false, $"WebSocket frame exceeds {MaxWebSocketFrameBytes} byte limit.", session.Root, session.EventCount);
+
+                if (TryGetInt(payload, "byteLength", out var declaredBytes) && declaredBytes != frameBytes)
+                    return new(false, "WebSocket frame byteLength does not match payloadData.", session.Root, session.EventCount);
+            }
+        }
+
+        await session.WriteLock.WaitAsync(cancellationToken);
+        try
+        {
+            var line = JsonSerializer.Serialize(new { eventType = type, receivedAtUtc = DateTimeOffset.UtcNow, data = sanitized });
+            await File.AppendAllTextAsync(session.NetworkLog, line + Environment.NewLine, cancellationToken);
+            session.EventCount++;
+            session.WebSocketEventCount++;
+            if (isFrame)
+            {
+                session.WebSocketFrameCount++;
+                if (frameBytes > 0) session.WebSocketFrameBytes += frameBytes;
+            }
+            return new(true, "WebSocket event saved.", session.Root, session.EventCount);
+        }
+        finally
+        {
+            session.WriteLock.Release();
+        }
+    }
+
     private async Task<CaptureResult> StopAsync(int tabId, JsonElement payload, CancellationToken cancellationToken)
     {
         if (!_sessions.TryRemove(tabId, out var session)) return new(false, $"No active capture for tab {tabId}.");
         var summary = new
         {
-            version = "0.3.0",
+            version = "0.4.0-dev",
             tabId,
             startedAtUtc = session.StartedAtUtc,
             stoppedAtUtc = DateTimeOffset.UtcNow,
@@ -216,8 +289,12 @@ public sealed class CaptureSessionManager
             bodyCount = session.BodyCount,
             bodyBytes = session.BodyBytes,
             maxBodyBytes = MaxBodyBytes,
+            webSocketEventCount = session.WebSocketEventCount,
+            webSocketFrameCount = session.WebSocketFrameCount,
+            webSocketFrameBytes = session.WebSocketFrameBytes,
+            maxWebSocketFrameBytes = MaxWebSocketFrameBytes,
             reason = GetString(payload, "reason") ?? "user",
-            mode = "same-origin-response-bodies"
+            mode = "same-origin-response-bodies+same-origin-websocket-frames"
         };
         await File.WriteAllTextAsync(Path.Combine(session.Root, "_network", "summary.json"), JsonSerializer.Serialize(summary, JsonOptionsIndented), cancellationToken);
         return new(true, "Capture session stopped.", session.Root, session.EventCount);
@@ -297,6 +374,16 @@ public sealed class CaptureSessionManager
         if (!Uri.TryCreate(url, UriKind.Absolute, out var candidate)) return false;
         if (candidate.Scheme is not ("http" or "https")) return false;
         return string.Equals(origin.Scheme, candidate.Scheme, StringComparison.OrdinalIgnoreCase)
+               && string.Equals(origin.IdnHost, candidate.IdnHost, StringComparison.OrdinalIgnoreCase)
+               && origin.Port == candidate.Port;
+    }
+
+    private static bool IsSameWebSocketOrigin(Uri origin, string url)
+    {
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var candidate)) return false;
+        if (candidate.Scheme is not ("ws" or "wss")) return false;
+        var expectedScheme = origin.Scheme.Equals("https", StringComparison.OrdinalIgnoreCase) ? "wss" : "ws";
+        return string.Equals(expectedScheme, candidate.Scheme, StringComparison.OrdinalIgnoreCase)
                && string.Equals(origin.IdnHost, candidate.IdnHost, StringComparison.OrdinalIgnoreCase)
                && origin.Port == candidate.Port;
     }

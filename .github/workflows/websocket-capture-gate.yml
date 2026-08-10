@@ -1,0 +1,45 @@
+name: TrueWebsiteCloner WebSocket Capture Gate
+
+on:
+  push:
+    branches:
+      - main
+      - 'agent/**'
+    paths:
+      - 'chrome-extension/**'
+      - 'src/TrueWebsiteCloner.Core/**'
+      - 'tests/TrueWebsiteCloner.WebSocketGateTests/**'
+      - '.github/workflows/websocket-capture-gate.yml'
+  pull_request:
+    paths:
+      - 'chrome-extension/**'
+      - 'src/TrueWebsiteCloner.Core/**'
+      - 'tests/TrueWebsiteCloner.WebSocketGateTests/**'
+      - '.github/workflows/websocket-capture-gate.yml'
+  workflow_dispatch:
+
+jobs:
+  gate-1-1:
+    name: Gate 1.1 / WebSocket Capture
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Check extension JavaScript syntax
+        shell: pwsh
+        run: node --check chrome-extension/service-worker.js
+
+      - name: Run WebSocket Gate 1.1
+        shell: pwsh
+        run: dotnet run --project tests/TrueWebsiteCloner.WebSocketGateTests/TrueWebsiteCloner.WebSocketGateTests.csproj -c Release

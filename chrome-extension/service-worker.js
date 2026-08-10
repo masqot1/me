@@ -1,11 +1,13 @@
 const NATIVE_HOST = 'com.truewebsitecloner.host';
 const DEBUGGER_VERSION = '1.3';
 const MAX_BODY_BYTES = 512 * 1024;
+const MAX_WEBSOCKET_FRAME_BYTES = 64 * 1024;
 let nativePort = null;
 let activeCapture = null;
 let eventCount = 0;
 const requestInfo = new Map();
 const responseInfo = new Map();
+const webSocketInfo = new Map();
 const pendingBodyTasks = new Set();
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -86,10 +88,27 @@ function sameOrigin(urlA, urlB) {
   catch { return false; }
 }
 
+function sameWebSocketOrigin(pageUrl, socketUrl) {
+  try {
+    const page = new URL(pageUrl);
+    const socket = new URL(socketUrl);
+    if (!['http:', 'https:'].includes(page.protocol)) return false;
+    if (!['ws:', 'wss:'].includes(socket.protocol)) return false;
+    const expectedProtocol = page.protocol === 'https:' ? 'wss:' : 'ws:';
+    return socket.protocol === expectedProtocol && socket.hostname === page.hostname && socket.port === page.port;
+  } catch {
+    return false;
+  }
+}
+
 function bodyByteLength(body, base64Encoded) {
   if (!base64Encoded) return new TextEncoder().encode(body).length;
   const padding = body.endsWith('==') ? 2 : body.endsWith('=') ? 1 : 0;
   return Math.max(0, Math.floor(body.length * 3 / 4) - padding);
+}
+
+function frameByteLength(payloadData) {
+  return new TextEncoder().encode(String(payloadData || '')).length;
 }
 
 async function startCaptureForTab(tab, reload) {
@@ -107,6 +126,7 @@ async function startCaptureForTab(tab, reload) {
 
   requestInfo.clear();
   responseInfo.clear();
+  webSocketInfo.clear();
   eventCount = 0;
   activeCapture = { tabId: tab.id, url: tab.url || '', title: tab.title || '', startedAt: new Date().toISOString() };
   await persistState({ lastError: null });
@@ -161,6 +181,28 @@ async function captureResponseBody(source, requestId) {
   }
 }
 
+function sendWebSocketFrame(tabId, requestId, direction, frame, timestamp) {
+  const info = webSocketInfo.get(requestId);
+  if (!activeCapture || !info?.url || !sameWebSocketOrigin(activeCapture.url, info.url)) return;
+  const payloadData = typeof frame?.payloadData === 'string' ? frame.payloadData : '';
+  const byteLength = frameByteLength(payloadData);
+  const payloadCaptured = byteLength <= MAX_WEBSOCKET_FRAME_BYTES;
+  sendCaptureEvent({
+    type: 'capture.websocket.frame',
+    tabId,
+    requestId,
+    url: info.url,
+    direction,
+    opcode: Number(frame?.opcode || 0),
+    mask: !!frame?.mask,
+    payloadCaptured,
+    byteLength,
+    payloadData: payloadCaptured ? payloadData : undefined,
+    reason: payloadCaptured ? undefined : 'frame-too-large',
+    timestamp
+  });
+}
+
 async function stopCapture(reason = 'user') {
   if (!activeCapture) return { ok: false, message: 'No active capture.' };
   if (pendingBodyTasks.size) await Promise.allSettled([...pendingBodyTasks]);
@@ -172,6 +214,7 @@ async function stopCapture(reason = 'user') {
   eventCount = 0;
   requestInfo.clear();
   responseInfo.clear();
+  webSocketInfo.clear();
   await persistState({ lastEventCount: count, lastError: null });
   return { ok: true, message: `Capture stopped. ${count} events sent.`, eventCount: count };
 }
@@ -226,6 +269,43 @@ chrome.debugger.onEvent.addListener((source, method, params) => {
     sendCaptureEvent({ type: 'capture.failed', tabId, requestId: params.requestId, errorText: params.errorText, canceled: !!params.canceled, blockedReason: params.blockedReason, resourceType: params.type, timestamp: params.timestamp });
     requestInfo.delete(params.requestId);
     responseInfo.delete(params.requestId);
+  } else if (method === 'Network.webSocketCreated') {
+    const url = params.url || '';
+    if (!sameWebSocketOrigin(activeCapture.url, url)) return;
+    webSocketInfo.set(params.requestId, { url });
+    sendCaptureEvent({
+      type: 'capture.websocket.created',
+      tabId,
+      requestId: params.requestId,
+      url,
+      initiatorType: params.initiator?.type || ''
+    });
+  } else if (method === 'Network.webSocketHandshakeResponseReceived') {
+    const info = webSocketInfo.get(params.requestId);
+    if (!info?.url) return;
+    const response = params.response || {};
+    sendCaptureEvent({
+      type: 'capture.websocket.handshake',
+      tabId,
+      requestId: params.requestId,
+      url: info.url,
+      status: Number(response.status || 0),
+      statusText: response.statusText || '',
+      timestamp: params.timestamp
+    });
+  } else if (method === 'Network.webSocketFrameSent') {
+    sendWebSocketFrame(tabId, params.requestId, 'sent', params.response, params.timestamp);
+  } else if (method === 'Network.webSocketFrameReceived') {
+    sendWebSocketFrame(tabId, params.requestId, 'received', params.response, params.timestamp);
+  } else if (method === 'Network.webSocketFrameError') {
+    const info = webSocketInfo.get(params.requestId);
+    if (!info?.url) return;
+    sendCaptureEvent({ type: 'capture.websocket.error', tabId, requestId: params.requestId, url: info.url, errorMessage: params.errorMessage || '', timestamp: params.timestamp });
+  } else if (method === 'Network.webSocketClosed') {
+    const info = webSocketInfo.get(params.requestId);
+    if (!info?.url) return;
+    sendCaptureEvent({ type: 'capture.websocket.closed', tabId, requestId: params.requestId, url: info.url, timestamp: params.timestamp });
+    webSocketInfo.delete(params.requestId);
   }
 });
 
@@ -237,6 +317,7 @@ chrome.debugger.onDetach.addListener((source, reason) => {
   eventCount = 0;
   requestInfo.clear();
   responseInfo.clear();
+  webSocketInfo.clear();
   persistState({ lastError: `Debugger detached: ${reason}` }).catch(() => {});
 });
 
