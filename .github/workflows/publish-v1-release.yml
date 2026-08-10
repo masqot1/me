@@ -1,0 +1,128 @@
+name: Publish V1.0 GitHub Release
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    if: github.event_name == 'workflow_dispatch' || github.event.head_commit.message == 'Publish TrueWebsiteCloner v1.0.0 GitHub Release'
+    name: Build, verify and publish v1.0.0
+    runs-on: windows-latest
+    timeout-minutes: 55
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Setup .NET 10 SDK
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Refuse to overwrite an existing v1.0.0 release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view v1.0.0 --repo $env:GITHUB_REPOSITORY *> $null
+          if ($LASTEXITCODE -eq 0) { throw 'GitHub Release v1.0.0 already exists; refusing to overwrite it.' }
+          Write-Host 'PASS  v1.0.0 does not exist yet'
+
+      - name: Publish framework-dependent binaries
+        shell: pwsh
+        run: ./scripts/Install-Dev.ps1
+
+      - name: Build and verify framework-dependent distribution
+        shell: pwsh
+        run: |
+          ./scripts/Build-Distribution.ps1 -OutputDirectory "${{ github.workspace }}\release-framework"
+          ./scripts/Verify-Distribution.ps1 -ZipPath "${{ github.workspace }}\release-framework\TrueWebsiteCloner-1.0.0-win-x64.zip"
+
+      - name: Publish standalone executables
+        shell: pwsh
+        run: ./scripts/Publish-Standalone.ps1 -OutputRoot "${{ github.workspace }}\release-standalone-artifacts"
+
+      - name: Build, verify and clean-install standalone distribution
+        shell: pwsh
+        run: |
+          ./scripts/Build-StandaloneDistribution.ps1 -StandaloneArtifacts "${{ github.workspace }}\release-standalone-artifacts" -OutputDirectory "${{ github.workspace }}\release-standalone"
+          $zip = "${{ github.workspace }}\release-standalone\TrueWebsiteCloner-1.0.0-win-x64-standalone.zip"
+          ./scripts/Verify-StandaloneDistribution.ps1 -ZipPath $zip
+          ./scripts/Test-StandaloneInstall.ps1 -ZipPath $zip
+
+      - name: Verify final aggregate succeeded on this exact commit
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $sha = $env:GITHUB_SHA
+          $deadline = (Get-Date).AddMinutes(20)
+          do {
+            $json = gh run list --repo $env:GITHUB_REPOSITORY --workflow v1-final-gate.yml --branch main --event push --limit 20 --json databaseId,headSha,status,conclusion | ConvertFrom-Json
+            $run = $json | Where-Object { $_.headSha -eq $sha } | Select-Object -First 1
+            if ($run -and $run.status -eq 'completed') {
+              if ($run.conclusion -ne 'success') { throw "V1.0 Final Aggregate failed on release commit: $($run.conclusion)" }
+              Write-Host "PASS  Final Aggregate run $($run.databaseId) succeeded on $sha"
+              break
+            }
+            if ((Get-Date) -ge $deadline) { throw 'Timed out waiting for V1.0 Final Aggregate on the release commit.' }
+            Start-Sleep -Seconds 10
+          } while ($true)
+
+      - name: Create draft GitHub Release with verified assets
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $framework = "${{ github.workspace }}\release-framework\TrueWebsiteCloner-1.0.0-win-x64.zip"
+          $frameworkHash = "$framework.sha256"
+          $standalone = "${{ github.workspace }}\release-standalone\TrueWebsiteCloner-1.0.0-win-x64-standalone.zip"
+          $standaloneHash = "$standalone.sha256"
+          gh release create v1.0.0 $framework $frameworkHash $standalone $standaloneHash `
+            --repo $env:GITHUB_REPOSITORY `
+            --target $env:GITHUB_SHA `
+            --title 'TrueWebsiteCloner 1.0.0' `
+            --notes-file '.github/release-notes-v1.0.md' `
+            --draft
+          if ($LASTEXITCODE -ne 0) { throw 'Failed to create draft GitHub Release.' }
+
+      - name: Verify draft release assets then publish
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $release = gh release view v1.0.0 --repo $env:GITHUB_REPOSITORY --json isDraft,tagName,targetCommitish,assets | ConvertFrom-Json
+          if (-not $release.isDraft) { throw 'Release was expected to remain draft during verification.' }
+          $expected = @(
+            'TrueWebsiteCloner-1.0.0-win-x64.zip',
+            'TrueWebsiteCloner-1.0.0-win-x64.zip.sha256',
+            'TrueWebsiteCloner-1.0.0-win-x64-standalone.zip',
+            'TrueWebsiteCloner-1.0.0-win-x64-standalone.zip.sha256'
+          )
+          $names = @($release.assets | ForEach-Object { $_.name })
+          foreach ($name in $expected) {
+            if ($names -notcontains $name) { throw "Draft release asset missing: $name" }
+            $asset = $release.assets | Where-Object { $_.name -eq $name } | Select-Object -First 1
+            if ([int64]$asset.size -le 0) { throw "Draft release asset is empty: $name" }
+          }
+          if ($names.Count -ne $expected.Count) { throw "Unexpected release asset count: $($names.Count)" }
+          gh release edit v1.0.0 --repo $env:GITHUB_REPOSITORY --draft=false
+          if ($LASTEXITCODE -ne 0) { throw 'Failed to publish verified draft release.' }
+          $published = gh release view v1.0.0 --repo $env:GITHUB_REPOSITORY --json isDraft,url,assets | ConvertFrom-Json
+          if ($published.isDraft) { throw 'Release is still draft after publish command.' }
+          Write-Host "RESULT: TRUEWEBSITECLONER V1.0 GITHUB RELEASE PUBLISHED"
+          Write-Host $published.url
+
+      - name: Upload release-publish audit hashes
+        uses: actions/upload-artifact@v7
+        with:
+          name: truewebsitecloner-v1.0-release-publish-audit
+          path: |
+            release-framework/*.sha256
+            release-standalone/*.sha256
+          if-no-files-found: error
+          retention-days: 90
