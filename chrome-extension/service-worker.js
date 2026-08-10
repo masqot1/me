@@ -2,6 +2,9 @@ const NATIVE_HOST = 'com.truewebsitecloner.host';
 const DEBUGGER_VERSION = '1.3';
 const MAX_BODY_BYTES = 512 * 1024;
 const MAX_WEBSOCKET_FRAME_BYTES = 64 * 1024;
+const MAX_REQUEST_PAYLOAD_BYTES = 64 * 1024;
+const REQUEST_PAYLOAD_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+const REQUEST_PAYLOAD_TYPES = new Set(['XHR', 'Fetch']);
 let nativePort = null;
 let activeCapture = null;
 let eventCount = 0;
@@ -83,6 +86,19 @@ function allowedMime(mime) {
   ].includes(mime);
 }
 
+function headerValue(headers, name) {
+  const wanted = String(name || '').toLowerCase();
+  for (const [key, value] of Object.entries(headers || {})) {
+    if (String(key).toLowerCase() === wanted) return String(value ?? '');
+  }
+  return '';
+}
+
+function allowedRequestContentType(contentType) {
+  const mime = normalizedMime(contentType);
+  return mime === 'application/json' || mime === 'application/ld+json' || mime.endsWith('+json') || mime === 'application/x-www-form-urlencoded';
+}
+
 function sameOrigin(urlA, urlB) {
   try { return new URL(urlA).origin === new URL(urlB).origin; }
   catch { return false; }
@@ -107,8 +123,93 @@ function bodyByteLength(body, base64Encoded) {
   return Math.max(0, Math.floor(body.length * 3 / 4) - padding);
 }
 
+function textByteLength(value) {
+  return new TextEncoder().encode(String(value || '')).length;
+}
+
 function frameByteLength(payloadData) {
-  return new TextEncoder().encode(String(payloadData || '')).length;
+  return textByteLength(payloadData);
+}
+
+function sendRequestPayload(tabId, params) {
+  if (!activeCapture) return;
+  const request = params.request || {};
+  const resourceType = String(params.type || '');
+  const method = String(request.method || '').toUpperCase();
+  const url = String(request.url || '');
+  const hasPostData = request.hasPostData === true || typeof request.postData === 'string';
+  if (!hasPostData) return;
+  if (!REQUEST_PAYLOAD_TYPES.has(resourceType)) return;
+  if (!REQUEST_PAYLOAD_METHODS.has(method)) return;
+  if (!sameOrigin(activeCapture.url, url)) return;
+
+  const contentType = normalizedMime(headerValue(request.headers, 'content-type'));
+  const postData = typeof request.postData === 'string' ? request.postData : null;
+  if (postData === null) {
+    sendCaptureEvent({
+      type: 'capture.request.payload',
+      tabId,
+      requestId: params.requestId,
+      url,
+      method,
+      resourceType,
+      contentType,
+      payloadCaptured: false,
+      byteLength: 0,
+      reason: 'post-data-unavailable',
+      timestamp: params.timestamp
+    });
+    return;
+  }
+
+  const byteLength = textByteLength(postData);
+  if (!allowedRequestContentType(contentType)) {
+    sendCaptureEvent({
+      type: 'capture.request.payload',
+      tabId,
+      requestId: params.requestId,
+      url,
+      method,
+      resourceType,
+      contentType,
+      payloadCaptured: false,
+      byteLength,
+      reason: 'unsupported-content-type',
+      timestamp: params.timestamp
+    });
+    return;
+  }
+
+  if (byteLength > MAX_REQUEST_PAYLOAD_BYTES) {
+    sendCaptureEvent({
+      type: 'capture.request.payload',
+      tabId,
+      requestId: params.requestId,
+      url,
+      method,
+      resourceType,
+      contentType,
+      payloadCaptured: false,
+      byteLength,
+      reason: 'payload-too-large',
+      timestamp: params.timestamp
+    });
+    return;
+  }
+
+  sendCaptureEvent({
+    type: 'capture.request.payload',
+    tabId,
+    requestId: params.requestId,
+    url,
+    method,
+    resourceType,
+    contentType,
+    payloadCaptured: true,
+    byteLength,
+    body: postData,
+    timestamp: params.timestamp
+  });
 }
 
 async function startCaptureForTab(tab, reload) {
@@ -118,7 +219,7 @@ async function startCaptureForTab(tab, reload) {
   ensureNativePort();
   await chrome.debugger.attach({ tabId: tab.id }, DEBUGGER_VERSION);
   try {
-    await chrome.debugger.sendCommand({ tabId: tab.id }, 'Network.enable', {});
+    await chrome.debugger.sendCommand({ tabId: tab.id }, 'Network.enable', { maxPostDataSize: MAX_REQUEST_PAYLOAD_BYTES });
   } catch (error) {
     await chrome.debugger.detach({ tabId: tab.id }).catch(() => {});
     throw error;
@@ -244,6 +345,7 @@ chrome.debugger.onEvent.addListener((source, method, params) => {
   if (method === 'Network.requestWillBeSent') {
     requestInfo.set(params.requestId, { method: params.request?.method || '', url: params.request?.url || '' });
     sendCaptureEvent({ type: 'capture.request', tabId, requestId: params.requestId, loaderId: params.loaderId, url: params.request?.url, method: params.request?.method, resourceType: params.type, documentUrl: params.documentURL, timestamp: params.timestamp, wallTime: params.wallTime });
+    sendRequestPayload(tabId, params);
   } else if (method === 'Network.responseReceived') {
     const r = params.response || {};
     const request = requestInfo.get(params.requestId) || {};

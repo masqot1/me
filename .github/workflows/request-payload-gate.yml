@@ -1,0 +1,168 @@
+name: TrueWebsiteCloner Request Payload Gate
+
+on:
+  push:
+    branches:
+      - main
+      - 'agent/**'
+    paths:
+      - 'chrome-extension/**'
+      - 'src/TrueWebsiteCloner.Core/**'
+      - 'src/TrueWebsiteCloner.TestLab/**'
+      - 'tests/TrueWebsiteCloner.RequestPayloadGateTests/**'
+      - 'tests/TrueWebsiteCloner.BridgeHarness/**'
+      - 'tests/runtime-gate-0.2B/**'
+      - '.github/workflows/request-payload-gate.yml'
+  pull_request:
+    paths:
+      - 'chrome-extension/**'
+      - 'src/TrueWebsiteCloner.Core/**'
+      - 'src/TrueWebsiteCloner.TestLab/**'
+      - 'tests/TrueWebsiteCloner.RequestPayloadGateTests/**'
+      - 'tests/TrueWebsiteCloner.BridgeHarness/**'
+      - 'tests/runtime-gate-0.2B/**'
+      - '.github/workflows/request-payload-gate.yml'
+  workflow_dispatch:
+
+jobs:
+  gate-1-2:
+    name: Gate 1.2 / XHR Fetch Request Payloads
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Check extension JavaScript syntax
+        shell: pwsh
+        run: |
+          node --check chrome-extension/service-worker.js
+          node --check src/TrueWebsiteCloner.TestLab/wwwroot/app.js
+
+      - name: Run Request Payload Gate 1.2 core validation
+        shell: pwsh
+        run: dotnet run --project tests/TrueWebsiteCloner.RequestPayloadGateTests/TrueWebsiteCloner.RequestPayloadGateTests.csproj -c Release
+
+      - name: Build and register TrueWebsiteCloner
+        shell: pwsh
+        run: ./scripts/Install-Dev.ps1
+
+      - name: Build headless bridge harness
+        shell: pwsh
+        run: |
+          dotnet publish tests/TrueWebsiteCloner.BridgeHarness/TrueWebsiteCloner.BridgeHarness.csproj -c Release -r win-x64 --self-contained false -o artifacts/bridge-harness
+          if ($LASTEXITCODE -ne 0) { throw "Bridge harness publish failed with exit code $LASTEXITCODE" }
+
+      - name: Install Puppeteer and Chrome for Testing
+        shell: pwsh
+        run: |
+          Push-Location ./tests/runtime-gate-0.2B
+          try {
+            npm install --no-audit --no-fund
+            if ($LASTEXITCODE -ne 0) { throw "npm install failed with exit code $LASTEXITCODE" }
+          }
+          finally { Pop-Location }
+
+      - name: Run real Chrome Request Payload Gate 1.2
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $gateRoot = Join-Path $env:GITHUB_WORKSPACE 'request-payload-runtime-output'
+          if (Test-Path $gateRoot) { Remove-Item $gateRoot -Recurse -Force }
+          New-Item -ItemType Directory -Path $gateRoot -Force | Out-Null
+          $env:TWC_PROJECT_ROOT = $gateRoot
+
+          $testLabExe = Join-Path $env:GITHUB_WORKSPACE 'artifacts\testlab\TrueWebsiteCloner.TestLab.exe'
+          $bridgeHarnessExe = Join-Path $env:GITHUB_WORKSPACE 'artifacts\bridge-harness\TrueWebsiteCloner.BridgeHarness.exe'
+          $bridgeInfo = Join-Path $env:LOCALAPPDATA 'TrueWebsiteCloner\runtime\bridge-info.json'
+          $testLab = $null
+          $bridgeHarness = $null
+
+          try {
+            if (Test-Path $bridgeInfo) { Remove-Item $bridgeInfo -Force -ErrorAction SilentlyContinue }
+
+            $testLab = Start-Process -FilePath $testLabExe -PassThru -WindowStyle Hidden
+            $ready = $false
+            for ($i = 0; $i -lt 60; $i++) {
+              if ($testLab.HasExited) { throw "Test Lab exited early with code $($testLab.ExitCode)." }
+              try { if ((Invoke-RestMethod 'http://127.0.0.1:7843/health' -TimeoutSec 2).ok) { $ready = $true; break } } catch { }
+              Start-Sleep -Milliseconds 500
+            }
+            if (-not $ready) { throw 'Test Lab did not become ready.' }
+
+            $bridgeHarness = Start-Process -FilePath $bridgeHarnessExe -PassThru -WindowStyle Hidden
+            for ($i = 0; $i -lt 40 -and -not (Test-Path $bridgeInfo); $i++) {
+              if ($bridgeHarness.HasExited) { throw "Headless bridge harness exited early with code $($bridgeHarness.ExitCode)." }
+              Start-Sleep -Milliseconds 250
+            }
+            if (-not (Test-Path $bridgeInfo)) { throw 'Headless bridge harness did not become ready.' }
+
+            $bridge = Get-Content $bridgeInfo -Raw | ConvertFrom-Json
+            if ([int]$bridge.port -le 0) { throw 'Headless bridge harness published an invalid port.' }
+            Write-Host "PASS  Headless BridgeServer ready on port $($bridge.port)"
+
+            Push-Location (Join-Path $env:GITHUB_WORKSPACE 'tests\runtime-gate-0.2B')
+            try {
+              node ./run-v0.3.mjs
+              if ($LASTEXITCODE -ne 0) { throw "Real Chrome Gate 1.2 fixture exited with $LASTEXITCODE" }
+            }
+            finally { Pop-Location }
+
+            $manifest = Get-ChildItem $gateRoot -Filter request-payloads.jsonl -Recurse -File | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
+            if (-not $manifest) { throw 'Real Chrome did not create request-payloads.jsonl.' }
+
+            $requestDir = Split-Path $manifest.FullName -Parent
+            $captureRoot = Split-Path $requestDir -Parent
+            $networkPath = Join-Path $captureRoot '_network\network.jsonl'
+            $summaryPath = Join-Path $captureRoot '_network\summary.json'
+            if (-not (Test-Path $networkPath)) { throw 'Real Chrome network.jsonl is missing.' }
+            if (-not (Test-Path $summaryPath)) { throw 'Real Chrome summary.json is missing.' }
+
+            $payloadFiles = @(Get-ChildItem $requestDir -File | Where-Object { $_.Name -ne 'request-payloads.jsonl' })
+            if ($payloadFiles.Count -lt 1) { throw 'No real Chrome request payload file was persisted.' }
+
+            $payloadText = ($payloadFiles | ForEach-Object { Get-Content $_.FullName -Raw }) -join "`n"
+            $manifestText = Get-Content $manifest.FullName -Raw
+            $networkText = Get-Content $networkPath -Raw
+            $summary = Get-Content $summaryPath -Raw | ConvertFrom-Json
+
+            if ($manifestText -notmatch '/api/echo') { throw 'Real Chrome /api/echo request payload is missing from manifest.' }
+            if ($payloadText -notmatch 'real-chrome-runtime') { throw 'Real Chrome payload marker is missing.' }
+            if ($payloadText -notmatch '\[REDACTED\]') { throw 'Real Chrome sensitive payload fields were not redacted.' }
+            foreach ($secret in @('RUNTIME-PASSWORD-MUST-NOT-PERSIST','RUNTIME-TOKEN-MUST-NOT-PERSIST')) {
+              if ($payloadText -match [regex]::Escape($secret)) { throw "Sensitive value leaked into request payload file: $secret" }
+              if ($manifestText -match [regex]::Escape($secret)) { throw "Sensitive value leaked into request manifest: $secret" }
+              if ($networkText -match [regex]::Escape($secret)) { throw "Sensitive value leaked into network.jsonl: $secret" }
+            }
+            if ([int]$summary.requestPayloadCount -lt 1) { throw "Real Chrome requestPayloadCount too low: $($summary.requestPayloadCount)" }
+            if ([int]$summary.requestPayloadRedactedFieldCount -lt 2) { throw "Real Chrome redaction count too low: $($summary.requestPayloadRedactedFieldCount)" }
+
+            Write-Host "PASS  Real Chrome persisted $($summary.requestPayloadCount) request payload(s)"
+            Write-Host 'PASS  CDP requestWillBeSent postData reached Core through Native Messaging'
+            Write-Host 'PASS  Real Chrome password/token values redacted before persistence'
+            Write-Host 'PASS  Raw request secrets excluded from manifest and network.jsonl'
+            Write-Host 'RESULT: REAL CHROME REQUEST PAYLOAD GATE 1.2 PASS'
+          }
+          finally {
+            if ($bridgeHarness -and -not $bridgeHarness.HasExited) { Stop-Process -Id $bridgeHarness.Id -Force -ErrorAction SilentlyContinue }
+            if ($testLab -and -not $testLab.HasExited) { Stop-Process -Id $testLab.Id -Force -ErrorAction SilentlyContinue }
+          }
+
+      - name: Upload Gate 1.2 evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: truewebsitecloner-gate-1.2-${{ github.run_number }}
+          path: request-payload-runtime-output/
+          if-no-files-found: warn
+          retention-days: 14
