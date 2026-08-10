@@ -1,0 +1,174 @@
+name: TrueWebsiteCloner Safe HTTP Header Gate
+
+on:
+  push:
+    branches:
+      - main
+      - 'agent/**'
+    paths:
+      - 'chrome-extension/**'
+      - 'src/TrueWebsiteCloner.Core/**'
+      - 'src/TrueWebsiteCloner.Desktop/BridgeServer.cs'
+      - 'src/TrueWebsiteCloner.TestLab/**'
+      - 'tests/TrueWebsiteCloner.HeaderGateTests/**'
+      - 'tests/TrueWebsiteCloner.BridgeHarness/**'
+      - 'tests/runtime-gate-0.2B/**'
+      - '.github/workflows/safe-http-header-gate.yml'
+  pull_request:
+    paths:
+      - 'chrome-extension/**'
+      - 'src/TrueWebsiteCloner.Core/**'
+      - 'src/TrueWebsiteCloner.Desktop/BridgeServer.cs'
+      - 'src/TrueWebsiteCloner.TestLab/**'
+      - 'tests/TrueWebsiteCloner.HeaderGateTests/**'
+      - 'tests/TrueWebsiteCloner.BridgeHarness/**'
+      - 'tests/runtime-gate-0.2B/**'
+      - '.github/workflows/safe-http-header-gate.yml'
+  workflow_dispatch:
+
+jobs:
+  gate-1-3:
+    name: Gate 1.3 / Safe HTTP Headers
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Check JavaScript syntax
+        shell: pwsh
+        run: |
+          node --check chrome-extension/service-worker.js
+          node --check src/TrueWebsiteCloner.TestLab/wwwroot/app.js
+
+      - name: Run Safe HTTP Header Gate 1.3 core validation
+        shell: pwsh
+        run: dotnet run --project tests/TrueWebsiteCloner.HeaderGateTests/TrueWebsiteCloner.HeaderGateTests.csproj -c Release
+
+      - name: Build and register TrueWebsiteCloner
+        shell: pwsh
+        run: ./scripts/Install-Dev.ps1
+
+      - name: Build headless bridge harness
+        shell: pwsh
+        run: |
+          dotnet publish tests/TrueWebsiteCloner.BridgeHarness/TrueWebsiteCloner.BridgeHarness.csproj -c Release -r win-x64 --self-contained false -o artifacts/bridge-harness
+          if ($LASTEXITCODE -ne 0) { throw "Bridge harness publish failed with exit code $LASTEXITCODE" }
+
+      - name: Install Puppeteer and Chrome for Testing
+        shell: pwsh
+        run: |
+          Push-Location ./tests/runtime-gate-0.2B
+          try {
+            npm install --no-audit --no-fund
+            if ($LASTEXITCODE -ne 0) { throw "npm install failed with exit code $LASTEXITCODE" }
+          }
+          finally { Pop-Location }
+
+      - name: Run real Chrome Safe HTTP Header Gate 1.3
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $gateRoot = Join-Path $env:GITHUB_WORKSPACE 'safe-header-runtime-output'
+          if (Test-Path $gateRoot) { Remove-Item $gateRoot -Recurse -Force }
+          New-Item -ItemType Directory -Path $gateRoot -Force | Out-Null
+          $env:TWC_PROJECT_ROOT = $gateRoot
+
+          $testLabExe = Join-Path $env:GITHUB_WORKSPACE 'artifacts\testlab\TrueWebsiteCloner.TestLab.exe'
+          $bridgeHarnessExe = Join-Path $env:GITHUB_WORKSPACE 'artifacts\bridge-harness\TrueWebsiteCloner.BridgeHarness.exe'
+          $bridgeInfo = Join-Path $env:LOCALAPPDATA 'TrueWebsiteCloner\runtime\bridge-info.json'
+          $testLab = $null
+          $bridgeHarness = $null
+
+          try {
+            if (Test-Path $bridgeInfo) { Remove-Item $bridgeInfo -Force -ErrorAction SilentlyContinue }
+
+            $testLab = Start-Process -FilePath $testLabExe -PassThru -WindowStyle Hidden
+            $ready = $false
+            for ($i = 0; $i -lt 60; $i++) {
+              if ($testLab.HasExited) { throw "Test Lab exited early with code $($testLab.ExitCode)." }
+              try { if ((Invoke-RestMethod 'http://127.0.0.1:7843/health' -TimeoutSec 2).ok) { $ready = $true; break } } catch { }
+              Start-Sleep -Milliseconds 500
+            }
+            if (-not $ready) { throw 'Test Lab did not become ready.' }
+
+            $bridgeHarness = Start-Process -FilePath $bridgeHarnessExe -PassThru -WindowStyle Hidden
+            for ($i = 0; $i -lt 40 -and -not (Test-Path $bridgeInfo); $i++) {
+              if ($bridgeHarness.HasExited) { throw "Headless bridge harness exited early with code $($bridgeHarness.ExitCode)." }
+              Start-Sleep -Milliseconds 250
+            }
+            if (-not (Test-Path $bridgeInfo)) { throw 'Headless bridge harness did not become ready.' }
+
+            Push-Location (Join-Path $env:GITHUB_WORKSPACE 'tests\runtime-gate-0.2B')
+            try {
+              node ./run-v0.3.mjs
+              if ($LASTEXITCODE -ne 0) { throw "Real Chrome Gate 1.3 fixture exited with $LASTEXITCODE" }
+            }
+            finally { Pop-Location }
+
+            $network = Get-ChildItem $gateRoot -Filter network.jsonl -Recurse -File | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
+            if (-not $network) { throw 'Real Chrome network.jsonl is missing.' }
+            $captureRoot = Split-Path (Split-Path $network.FullName -Parent) -Parent
+            $policyPath = Join-Path $captureRoot '_network\header-policy.json'
+            if (-not (Test-Path $policyPath)) { throw 'Real Chrome header-policy.json is missing.' }
+
+            $events = @(Get-Content $network.FullName | Where-Object { $_.Trim() } | ForEach-Object { $_ | ConvertFrom-Json })
+            $requestHeaders = @($events | Where-Object { $_.eventType -eq 'capture.request.headers' -and $_.data.url -match '/api/echo' })
+            $responseHeaders = @($events | Where-Object { $_.eventType -eq 'capture.response.headers' -and $_.data.url -match '/api/echo' })
+            if ($requestHeaders.Count -lt 1) { throw 'Real Chrome /api/echo request header event is missing.' }
+            if ($responseHeaders.Count -lt 1) { throw 'Real Chrome /api/echo response header event is missing.' }
+
+            $requestEvent = $requestHeaders | Select-Object -First 1
+            $responseEvent = $responseHeaders | Select-Object -First 1
+            if ($requestEvent.data.headers.'content-type' -notmatch 'application/json') { throw 'Safe request Content-Type was not persisted.' }
+            if ($requestEvent.data.headers.'cache-control' -ne 'no-cache') { throw 'Safe request Cache-Control was not persisted.' }
+            if ($responseEvent.data.headers.etag -ne '"gate-1.3-echo"') { throw "Safe response ETag mismatch: $($responseEvent.data.headers.etag)" }
+            if ($responseEvent.data.headers.'content-language' -ne 'en') { throw 'Safe response Content-Language was not persisted.' }
+            if ($responseEvent.data.headers.'cache-control' -ne 'no-store') { throw 'Safe response Cache-Control was not persisted.' }
+
+            $allCaptureText = (Get-ChildItem $gateRoot -Recurse -File | ForEach-Object {
+              try { Get-Content $_.FullName -Raw -ErrorAction Stop } catch { '' }
+            }) -join "`n"
+            foreach ($secret in @(
+              'RUNTIME-AUTH-HEADER-MUST-NOT-PERSIST',
+              'RUNTIME-APIKEY-HEADER-MUST-NOT-PERSIST',
+              'RUNTIME-SET-COOKIE-MUST-NOT-PERSIST',
+              'RUNTIME-RESPONSE-APIKEY-MUST-NOT-PERSIST'
+            )) {
+              if ($allCaptureText -match [regex]::Escape($secret)) { throw "Sensitive HTTP header value leaked into capture artifacts: $secret" }
+            }
+
+            $networkText = Get-Content $network.FullName -Raw
+            foreach ($name in @('authorization','cookie','set-cookie','x-api-key')) {
+              if ($networkText -match ('"' + [regex]::Escape($name) + '"\s*:')) { throw "Sensitive header name leaked into network.jsonl: $name" }
+            }
+
+            Write-Host 'PASS  Real Chrome request safe headers persisted'
+            Write-Host 'PASS  Real Chrome response safe headers persisted'
+            Write-Host 'PASS  Authorization/API-key/Set-Cookie sentinels excluded from all capture artifacts'
+            Write-Host 'PASS  Header policy artifact created through production BridgeServer'
+            Write-Host 'RESULT: REAL CHROME SAFE HTTP HEADER GATE 1.3 PASS'
+          }
+          finally {
+            if ($bridgeHarness -and -not $bridgeHarness.HasExited) { Stop-Process -Id $bridgeHarness.Id -Force -ErrorAction SilentlyContinue }
+            if ($testLab -and -not $testLab.HasExited) { Stop-Process -Id $testLab.Id -Force -ErrorAction SilentlyContinue }
+          }
+
+      - name: Upload Gate 1.3 evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: truewebsitecloner-gate-1.3-${{ github.run_number }}
+          path: safe-header-runtime-output/
+          if-no-files-found: warn
+          retention-days: 14

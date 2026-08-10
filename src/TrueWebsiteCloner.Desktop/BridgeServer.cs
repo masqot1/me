@@ -13,6 +13,7 @@ public sealed class BridgeServer : IAsyncDisposable
     private readonly TcpListener _listener = new(IPAddress.Loopback, 0);
     private readonly CancellationTokenSource _cts = new();
     private readonly CaptureSessionManager _captures = new();
+    private readonly SafeHeaderCaptureManager _headers = new();
     private Task? _acceptLoop;
     private string _token = string.Empty;
 
@@ -69,8 +70,25 @@ public sealed class BridgeServer : IAsyncDisposable
 
                 var type = envelope.Payload.TryGetProperty("type", out var typeValue) ? typeValue.GetString() ?? "unknown" : "unknown";
                 object? data = null;
-                if (type.StartsWith("capture.", StringComparison.Ordinal))
-                    data = await _captures.HandleAsync(type, envelope.Payload, cancellationToken);
+                if (type is "capture.request.headers" or "capture.response.headers")
+                {
+                    data = await _headers.HandleAsync(type, envelope.Payload, cancellationToken);
+                }
+                else if (type.StartsWith("capture.", StringComparison.Ordinal))
+                {
+                    var captureResult = await _captures.HandleAsync(type, envelope.Payload, cancellationToken);
+                    data = captureResult;
+                    if (type == "capture.start" && captureResult.Ok && !string.IsNullOrWhiteSpace(captureResult.SessionPath))
+                    {
+                        var headerRegistration = await _headers.RegisterAsync(envelope.Payload, captureResult.SessionPath, cancellationToken);
+                        if (!headerRegistration.Ok)
+                            data = new { capture = captureResult, headers = headerRegistration };
+                    }
+                    else if (type == "capture.stop")
+                    {
+                        _headers.Unregister(envelope.Payload);
+                    }
+                }
 
                 LastExtensionMessageAtUtc = DateTimeOffset.UtcNow;
                 LastMessageSummary = $"{type} from {envelope.Origin ?? "unknown origin"}";
