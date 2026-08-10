@@ -1,21 +1,22 @@
 # TrueWebsiteCloner
 
-Current development stage: **v0.13 Project Diagnostics Dashboard**.
+**Version: 1.0.0 — Final Gates PASS**
 
-## Passed gates
+TrueWebsiteCloner is a Windows desktop + Chrome capture/offline-replay workspace built through deterministic PASS gates. The V1.0 baseline includes the WPF desktop application, pinned Manifest V3 Native Messaging bridge, bounded response-body capture, offline builder/runtime, verification, recovery, dependency/completeness analysis, visual comparison, immutable history, portable project integrity, release readiness, verified release seals and deterministic `.twcrelease` bundles.
 
-Gates 0.1 through 0.12 have passed on GitHub Actions. The Windows app includes a bounded project catalog/workspace in addition to capture, response bodies, offline building, local replay, verification, recovery, dependency scoring, visual comparison, immutable snapshots and portable project integrity.
+## V1.0 release validation
 
-## v0.13 scope
+The repository's V1.0 Final Aggregate Gate waits for every push-triggered `TrueWebsiteCloner` workflow on the exact final commit and requires all of them to succeed. The V1.0 Release Candidate master sweep also executes every `*GateTests` project, including the release-readiness, release-seal, release-bundle and end-to-end release-operations tests.
 
-V0.13 adds one machine-readable health model per project at `_diagnostics/project-health.json`. It normalizes evidence from all previous stages into `PASS`, `WARNING`, `FAIL` and `NOT_RUN` checks, each with a relative evidence path and a recommended next action.
+## Windows distribution
 
-The overall readiness becomes `READY`, `NEEDS_REVIEW` or `NOT_READY`. Reports contain no absolute project paths or timestamps and are deterministic for unchanged evidence.
+`.github/workflows/distribution-gate.yml` builds `TrueWebsiteCloner-1.0.0-win-x64.zip`, verifies SHA-256 for every shipped file, rebuilds it a second time and requires byte-identical archive hashes. The package contains installer/run/uninstall wrappers, the Chrome extension and the published V1.0 application/tools. See `docs/V1.0-DISTRIBUTION.md`.
 
-The Desktop workspace provides **Run Diagnostics** for the selected project and displays its latest Health/Readiness plus the highest-priority next action. Diagnostics only read local project evidence; they do not restart capture or contact any external site.
+## Core release commands
 
-See `docs/GATE-0.13.md` for the health model.
+```text
+scripts\Install-Dev.ps1
+scripts\Release-Project.ps1 -ProjectRoot <verified-project> -OutputBundle <project.twcrelease>
+```
 
-## Next stage
-
-After Gate 0.13 passes, the next stage is release-readiness and project validation orchestration: run the applicable local project checks in dependency order and produce one final readiness manifest without silently re-running capture or contacting external sites.
+Version marker: `VERSION` = `1.0.0`.

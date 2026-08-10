@@ -1,0 +1,65 @@
+name: TrueWebsiteCloner V1.0 Distribution Gate
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  distribution:
+    name: V1.0 / Windows Distribution Integrity
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Setup .NET 10 SDK
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Publish V1.0 binaries
+        shell: pwsh
+        run: ./scripts/Install-Dev.ps1
+
+      - name: Build first deterministic distribution
+        shell: pwsh
+        run: ./scripts/Build-Distribution.ps1 -OutputDirectory "${{ github.workspace }}\distribution-a"
+
+      - name: Verify first distribution
+        shell: pwsh
+        run: ./scripts/Verify-Distribution.ps1 -ZipPath "${{ github.workspace }}\distribution-a\TrueWebsiteCloner-1.0.0-win-x64.zip"
+
+      - name: Build second deterministic distribution
+        shell: pwsh
+        run: ./scripts/Build-Distribution.ps1 -OutputDirectory "${{ github.workspace }}\distribution-b"
+
+      - name: Prove repeated package bytes are identical
+        shell: pwsh
+        run: |
+          $a = '${{ github.workspace }}\distribution-a\TrueWebsiteCloner-1.0.0-win-x64.zip'
+          $b = '${{ github.workspace }}\distribution-b\TrueWebsiteCloner-1.0.0-win-x64.zip'
+          $hashA = (Get-FileHash $a -Algorithm SHA256).Hash.ToLowerInvariant()
+          $hashB = (Get-FileHash $b -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($hashA -ne $hashB) { throw "Distribution is not deterministic: $hashA != $hashB" }
+          Write-Host "PASS  repeated distribution SHA-256 = $hashA" -ForegroundColor Green
+
+      - name: Prepare downloadable distribution
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path '${{ github.workspace }}\distribution-output' -Force | Out-Null
+          Copy-Item '${{ github.workspace }}\distribution-a\TrueWebsiteCloner-1.0.0-win-x64.zip' '${{ github.workspace }}\distribution-output\TrueWebsiteCloner-1.0.0-win-x64.zip'
+          Copy-Item '${{ github.workspace }}\distribution-a\TrueWebsiteCloner-1.0.0-win-x64.zip.sha256' '${{ github.workspace }}\distribution-output\TrueWebsiteCloner-1.0.0-win-x64.zip.sha256'
+
+      - name: Upload V1.0 Windows distribution
+        uses: actions/upload-artifact@v7
+        with:
+          name: TrueWebsiteCloner-1.0.0-win-x64
+          path: distribution-output/
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0
